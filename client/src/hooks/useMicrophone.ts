@@ -61,9 +61,7 @@ export function useMicrophone(options: MicrophoneOptions) {
 
       // Reuse existing media stream if tracks are still active
       let stream = streamRef.current;
-      const isStreamActive = stream && stream.getTracks().some((t) => t.readyState === 'live');
-
-      if (!isStreamActive) {
+      if (!stream || !stream.getTracks().some((t) => t.readyState === 'live')) {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,

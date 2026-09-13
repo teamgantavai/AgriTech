@@ -27,7 +27,7 @@ export function DebugPanel({ metrics, voiceState }: DebugPanelProps) {
 
   if (!visible) return null;
 
-  const fmt = (v: number | null, unit = 'ms') =>
+  const fmt = (v: number | null | undefined, unit = 'ms') =>
     v == null ? '—' : `${Math.round(v)}${unit}`;
 
   const rows: [string, string][] = [

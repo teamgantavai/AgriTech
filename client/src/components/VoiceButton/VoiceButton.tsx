@@ -15,6 +15,11 @@ const STATE_CONFIG: Record<VoiceState, { label: string; icon: string; bg: string
     icon: '🎙️',
     bg: 'bg-neutral-900 hover:bg-neutral-800 text-white',
   },
+  [VoiceState.PREPARING]: {
+    label: 'Preparing...',
+    icon: '⟳',
+    bg: 'bg-amber-600 hover:bg-amber-700 text-white',
+  },
   [VoiceState.CONNECTING]: {
     label: 'Connecting...',
     icon: '⟳',
