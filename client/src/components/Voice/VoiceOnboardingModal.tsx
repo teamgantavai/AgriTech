@@ -104,7 +104,7 @@ export const LANG_META: Record<string, { greeting: string; flag: string; spokenK
 };
 
 // 3 Deterministic Audio Questions in User's Selected Language
-export const VOICE_PROMPTS = {
+export const VOICE_PROMPTS: Record<'step1' | 'step2' | 'step3' | 'confirm', Record<string, string>> = {
   // Question 1: Language selection
   step1: {
     hi: 'नमस्ते! आप कौन सी भाषा में शुरू करना चाहेंगे? अपनी भाषा चुनें या बोलें।',
