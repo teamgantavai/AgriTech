@@ -1,0 +1,386 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "1.0.0",
+  "title": "Sahkar Sathi Language Recommendation & Conversion Engine",
+  "description": "Configuration rules, mappings, and UI prompts to automatically detect and convert the website to the user's recommended Indian language.",
+  "metadata": {
+    "appName": "Sahkar Sathi",
+    "appNativeName": "सहकार साथी",
+    "defaultLanguage": "en",
+    "fallbackLanguage": "hi",
+    "totalLanguagesSupported": 14,
+    "storageKeys": {
+      "preferredLanguage": "language",
+      "legacyLanguage": "sahkar_preferred_language",
+      "recommendationDismissed": "sahkar_lang_recommendation_dismissed",
+      "userRole": "sahkar_user_role",
+      "autoConverted": "sahkar_lang_auto_converted"
+    }
+  },
+  "conversionDirectives": {
+    "autoConvertOnHighConfidence": true,
+    "promptBannerOnMediumConfidence": true,
+    "detectNavigatorLanguage": true,
+    "detectGeoLocation": true,
+    "preserveUserSelection": true,
+    "updateDocumentAttributes": {
+      "htmlLang": true,
+      "direction": true,
+      "rtlClass": "rtl"
+    },
+    "detectionPriority": [
+      "stored_user_preference",
+      "url_query_parameter",
+      "browser_navigator_languages",
+      "ip_geolocation_state",
+      "system_default_fallback"
+    ]
+  },
+  "supportedLanguages": [
+    {
+      "code": "hi",
+      "name": "Hindi",
+      "nativeName": "हिन्दी",
+      "greeting": "नमस्ते",
+      "flag": "🇮🇳",
+      "direction": "ltr",
+      "voiceLocale": "hi-IN",
+      "script": "Devanagari",
+      "isOfficialUnion": true
+    },
+    {
+      "code": "en",
+      "name": "English",
+      "nativeName": "English",
+      "greeting": "Hello / Welcome",
+      "flag": "🇮🇳",
+      "direction": "ltr",
+      "voiceLocale": "en-IN",
+      "script": "Latin",
+      "isOfficialUnion": true
+    },
+    {
+      "code": "hi-Latn",
+      "name": "Hinglish",
+      "nativeName": "Hinglish",
+      "greeting": "Namaste",
+      "flag": "🇮🇳",
+      "direction": "ltr",
+      "voiceLocale": "hi-IN",
+      "script": "Latin",
+      "isColloquial": true
+    },
+    {
+      "code": "pa",
+      "name": "Punjabi",
+      "nativeName": "ਪੰਜਾਬੀ",
+      "greeting": "ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ",
+      "flag": "🇮🇳",
+      "direction": "ltr",
+      "voiceLocale": "pa-IN",
+      "script": "Gurmukhi"
+    },
+    {
+      "code": "mr",
+      "name": "Marathi",
+      "nativeName": "मराठी",
+      "greeting": "नमस्कार",
+      "flag": "🇮🇳",
+      "direction": "ltr",
+      "voiceLocale": "mr-IN",
+      "script": "Devanagari"
+    },
+    {
+      "code": "gu",
+      "name": "Gujarati",
+      "nativeName": "ગુજરાતી",
+      "greeting": "નમસ્તે",
+      "flag": "🇮🇳",
+      "direction": "ltr",
+      "voiceLocale": "gu-IN",
+      "script": "Gujarati"
+    },
+    {
+      "code": "bn",
+      "name": "Bengali",
+      "nativeName": "বাংলা",
+      "greeting": "নমস্কার",
+      "flag": "🇮🇳",
+      "direction": "ltr",
+      "voiceLocale": "bn-IN",
+      "script": "Bengali"
+    },
+    {
+      "code": "ta",
+      "name": "Tamil",
+      "nativeName": "தமிழ்",
+      "greeting": "வணக்கம்",
+      "flag": "🇮🇳",
+      "direction": "ltr",
+      "voiceLocale": "ta-IN",
+      "script": "Tamil"
+    },
+    {
+      "code": "te",
+      "name": "Telugu",
+      "nativeName": "తెలుగు",
+      "greeting": "నమస్కారం",
+      "flag": "🇮🇳",
+      "direction": "ltr",
+      "voiceLocale": "te-IN",
+      "script": "Telugu"
+    },
+    {
+      "code": "kn",
+      "name": "Kannada",
+      "nativeName": "ಕನ್ನಡ",
+      "greeting": "ನಮಸ್ಕಾರ",
+      "flag": "🇮🇳",
+      "direction": "ltr",
+      "voiceLocale": "kn-IN",
+      "script": "Kannada"
+    },
+    {
+      "code": "ml",
+      "name": "Malayalam",
+      "nativeName": "മലയാളം",
+      "greeting": "നമസ്കാരം",
+      "flag": "🇮🇳",
+      "direction": "ltr",
+      "voiceLocale": "ml-IN",
+      "script": "Malayalam"
+    },
+    {
+      "code": "or",
+      "name": "Odia",
+      "nativeName": "ଓଡ଼ିଆ",
+      "greeting": "ନମସ୍କାର",
+      "flag": "🇮🇳",
+      "direction": "ltr",
+      "voiceLocale": "or-IN",
+      "script": "Odia"
+    },
+    {
+      "code": "as",
+      "name": "Assamese",
+      "nativeName": "অসমীয়া",
+      "greeting": "নমস্কাৰ",
+      "flag": "🇮🇳",
+      "direction": "ltr",
+      "voiceLocale": "as-IN",
+      "script": "Bengali-Assamese"
+    },
+    {
+      "code": "ur",
+      "name": "Urdu",
+      "nativeName": "اردو",
+      "greeting": "آداب / خوش آمدید",
+      "flag": "🇮🇳",
+      "direction": "rtl",
+      "voiceLocale": "ur-IN",
+      "script": "Perso-Arabic"
+    }
+  ],
+  "browserLocaleMappings": {
+    "hi": "hi",
+    "hi-in": "hi",
+    "hin": "hi",
+    "en": "en",
+    "en-in": "en",
+    "en-us": "en",
+    "en-gb": "en",
+    "pa": "pa",
+    "pa-in": "pa",
+    "pa-pk": "pa",
+    "pan": "pa",
+    "mr": "mr",
+    "mr-in": "mr",
+    "mar": "mr",
+    "gu": "gu",
+    "gu-in": "gu",
+    "guj": "gu",
+    "bn": "bn",
+    "bn-in": "bn",
+    "bn-bd": "bn",
+    "ben": "bn",
+    "ta": "ta",
+    "ta-in": "ta",
+    "ta-lk": "ta",
+    "ta-sg": "ta",
+    "tam": "ta",
+    "te": "te",
+    "te-in": "te",
+    "tel": "te",
+    "kn": "kn",
+    "kn-in": "kn",
+    "kan": "kn",
+    "ml": "ml",
+    "ml-in": "ml",
+    "mal": "ml",
+    "or": "or",
+    "or-in": "or",
+    "ory": "or",
+    "ori": "or",
+    "as": "as",
+    "as-in": "as",
+    "asm": "as",
+    "ur": "ur",
+    "ur-in": "ur",
+    "ur-pk": "ur",
+    "urd": "ur",
+    "hi-latn": "hi-Latn"
+  },
+  "indianStateMappings": {
+    "punjab": { "primary": "pa", "secondary": "hi", "name": "Punjab", "nameHi": "पंजाब" },
+    "chandigarh": { "primary": "pa", "secondary": "hi", "name": "Chandigarh", "nameHi": "चंडीगढ़" },
+    "maharashtra": { "primary": "mr", "secondary": "hi", "name": "Maharashtra", "nameHi": "महाराष्ट्र" },
+    "goa": { "primary": "mr", "secondary": "en", "name": "Goa", "nameHi": "गोवा" },
+    "gujarat": { "primary": "gu", "secondary": "hi", "name": "Gujarat", "nameHi": "गुजरात" },
+    "dadra and nagar haveli and daman and diu": { "primary": "gu", "secondary": "hi", "name": "Dadra & Nagar Haveli and Daman & Diu", "nameHi": "दादरा और नगर हवेली और दमन और दीव" },
+    "west bengal": { "primary": "bn", "secondary": "en", "name": "West Bengal", "nameHi": "पश्चिम बंगाल" },
+    "tripura": { "primary": "bn", "secondary": "en", "name": "Tripura", "nameHi": "त्रिपुरा" },
+    "tamil nadu": { "primary": "ta", "secondary": "en", "name": "Tamil Nadu", "nameHi": "तमिलनाडु" },
+    "puducherry": { "primary": "ta", "secondary": "en", "name": "Puducherry", "nameHi": "पुडुचेरी" },
+    "andhra pradesh": { "primary": "te", "secondary": "en", "name": "Andhra Pradesh", "nameHi": "आंध्र प्रदेश" },
+    "telangana": { "primary": "te", "secondary": "ur", "name": "Telangana", "nameHi": "तेलंगाना" },
+    "karnataka": { "primary": "kn", "secondary": "en", "name": "Karnataka", "nameHi": "कर्नाटक" },
+    "kerala": { "primary": "ml", "secondary": "en", "name": "Kerala", "nameHi": "केरल" },
+    "lakshadweep": { "primary": "ml", "secondary": "en", "name": "Lakshadweep", "nameHi": "लक्षद्वीप" },
+    "odisha": { "primary": "or", "secondary": "hi", "name": "Odisha", "nameHi": "ओडिशा" },
+    "assam": { "primary": "as", "secondary": "bn", "name": "Assam", "nameHi": "असम" },
+    "jammu and kashmir": { "primary": "ur", "secondary": "hi", "name": "Jammu & Kashmir", "nameHi": "जम्मू और कश्मीर" },
+    "ladakh": { "primary": "ur", "secondary": "hi", "name": "Ladakh", "nameHi": "लद्दाख" },
+    "uttar pradesh": { "primary": "hi", "secondary": "ur", "name": "Uttar Pradesh", "nameHi": "उत्तर प्रदेश" },
+    "bihar": { "primary": "hi", "secondary": "ur", "name": "Bihar", "nameHi": "बिहार" },
+    "madhya pradesh": { "primary": "hi", "secondary": "en", "name": "Madhya Pradesh", "nameHi": "मध्य प्रदेश" },
+    "rajasthan": { "primary": "hi", "secondary": "en", "name": "Rajasthan", "nameHi": "राजस्थान" },
+    "haryana": { "primary": "hi", "secondary": "pa", "name": "Haryana", "nameHi": "हरियाणा" },
+    "delhi": { "primary": "hi", "secondary": "en", "name": "Delhi", "nameHi": "दिल्ली" },
+    "himachal pradesh": { "primary": "hi", "secondary": "en", "name": "Himachal Pradesh", "nameHi": "हिमाचल प्रदेश" },
+    "uttarakhand": { "primary": "hi", "secondary": "en", "name": "Uttarakhand", "nameHi": "उत्तराखंड" },
+    "chhattisgarh": { "primary": "hi", "secondary": "en", "name": "Chhattisgarh", "nameHi": "छत्तीसगढ़" },
+    "jharkhand": { "primary": "hi", "secondary": "bn", "name": "Jharkhand", "nameHi": "झारखंड" },
+    "meghalaya": { "primary": "en", "secondary": "as", "name": "Meghalaya", "nameHi": "मेघालय" },
+    "mizoram": { "primary": "en", "secondary": "hi", "name": "Mizoram", "nameHi": "मिजोरम" },
+    "manipur": { "primary": "en", "secondary": "hi", "name": "Manipur", "nameHi": "मणिपुर" },
+    "nagaland": { "primary": "en", "secondary": "hi", "name": "Nagaland", "nameHi": "नागालैंड" },
+    "sikkim": { "primary": "hi", "secondary": "en", "name": "Sikkim", "nameHi": "सिक्किम" },
+    "arunachal pradesh": { "primary": "hi", "secondary": "en", "name": "Arunachal Pradesh", "nameHi": "अरुणाचल प्रदेश" }
+  },
+  "spokenKeywords": {
+    "hi": ["hindi", "हिन्दी", "हिंदी", "hindee", "hindustani"],
+    "en": ["english", "inglish", "अंग्रेजी", "angreji"],
+    "hi-Latn": ["hinglish", "hymglish", "हिंग्लिश", "roman hindi"],
+    "pa": ["punjabi", "panjabi", "ਪੰਜਾਬੀ", "पंजाबी"],
+    "mr": ["marathi", "मराठी", "marathi bhasha"],
+    "gu": ["gujarati", "ગુજરાતી", "गुजराती"],
+    "bn": ["bengali", "bangla", "বাংলা", "बंगाली"],
+    "ta": ["tamil", "தமிழ்", "तमिल"],
+    "te": ["telugu", "తెలుగు", "तेलुगु"],
+    "kn": ["kannada", "ಕನ್ನಡ", "कन्नड़"],
+    "ml": ["malayalam", "മലയാളം", "मलयालम"],
+    "or": ["odia", "oriya", "ଓଡ଼ିଆ", "उड़िया"],
+    "as": ["assamese", "asomiya", "অসমীয়া", "असमिया"],
+    "ur": ["urdu", "اردو", "उर्दू"]
+  },
+  "recommendationPrompts": {
+    "hi": {
+      "title": "सुझाई गई भाषा (Recommended Language)",
+      "message": "नमस्ते! ऐसा प्रतीत होता है कि आप हिन्दी भाषा को प्राथमिकता देते हैं। क्या आप सहकार साथी को हिन्दी में देखना चाहते हैं?",
+      "confirm": "हाँ, हिन्दी में बदलें",
+      "dismiss": "English में रखें",
+      "remember": "मेरी पसंद याद रखें"
+    },
+    "en": {
+      "title": "Recommended Language",
+      "message": "Welcome! We noticed your device language is English. Would you like to view Sahkar Sathi in English?",
+      "confirm": "Switch to English",
+      "dismiss": "Keep Current",
+      "remember": "Remember my choice"
+    },
+    "hi-Latn": {
+      "title": "Recommended Language (Hinglish)",
+      "message": "Namaste! Lagta hai aap Hinglish prefer karte hain. Kya aap website ko Hinglish me convert karna chahte hain?",
+      "confirm": "Haan, Hinglish me badle",
+      "dismiss": "English me rakhein",
+      "remember": "Meri choice yaad rakhein"
+    },
+    "pa": {
+      "title": "ਸੁਝਾਈ ਗਈ ਭਾਸ਼ਾ (Recommended Language)",
+      "message": "ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ! ਅਜਿਹਾ ਲਗਦਾ ਹੈ ਕਿ ਤੁਸੀਂ ਪੰਜਾਬੀ ਤਰਜੀਹ ਦਿੰਦੇ ਹੋ। ਕੀ ਤੁਸੀਂ ਸਹਿਕਾਰ ਸਾਥੀ ਨੂੰ ਪੰਜਾਬੀ ਵਿੱਚ ਬਦਲਣਾ ਚਾਹੁੰਦੇ ਹੋ?",
+      "confirm": "ਹਾਂ, ਪੰਜਾਬੀ ਵਿੱਚ ਬਦਲੋ",
+      "dismiss": "English ਵਿੱਚ ਰੱਖੋ",
+      "remember": "ਮੇਰੀ ਚੋਣ ਯਾਦ ਰੱਖੋ"
+    },
+    "mr": {
+      "title": "शिफारस केलेली भाषा (Recommended Language)",
+      "message": "नमस्कार! असे दिसते की आपण मराठी भाषेला प्राधान्य देता. आपण सहकार साथी संकेतस्थळ मराठीत पाहू इच्छिता का?",
+      "confirm": "होय, मराठीत बदला",
+      "dismiss": "English ठेवा",
+      "remember": "माझी निवड लक्षात ठेवा"
+    },
+    "gu": {
+      "title": "ભલામણ કરેલ ભાષા (Recommended Language)",
+      "message": "નમસ્તે! એવું લાગે છે કે તમે ગુજરાતી પસંદ કરો છો. શું તમે સહકાર સાથીને ગુજરાતીમાં બદલવા માંગો છો?",
+      "confirm": "હા, ગુજરાતીમાં બદલો",
+      "dismiss": "English રાખો",
+      "remember": "મારી પસંદ યાદ રાખો"
+    },
+    "bn": {
+      "title": "সুপারিশকৃত ভাষা (Recommended Language)",
+      "message": "নমস্কার! মনে হচ্ছে আপনি বাংলা ভাষা পছন্দ করেন। আপনি কি সহকার সাথী বাংলায় দেখতে চান?",
+      "confirm": "হ্যাঁ, বাংলায় পরিবর্তন করুন",
+      "dismiss": "English রাখুন",
+      "remember": "আমার পছন্দ মনে রাখুন"
+    },
+    "ta": {
+      "title": "பரிந்துரைக்கப்பட்ட மொழி (Recommended Language)",
+      "message": "வணக்கம்! நீங்கள் தமிழை விரும்புகிறீர்கள் எனத் தெரிகிறது. சகார் சாதியை தமிழில் மாற்ற விரும்புகிறீர்களா?",
+      "confirm": "ஆம், தமிழுக்கு மாற்றவும்",
+      "dismiss": "English தொடரவும்",
+      "remember": "என் தேர்வை நினைவில் கொள்க"
+    },
+    "te": {
+      "title": "సిఫార్సు చేయబడిన భాష (Recommended Language)",
+      "message": "నమస్కారం! మీరు తెలుగును ఇష్టపడుతున్నట్లు కనిపిస్తోంది. సహకార్ సాథీని తెలుగులోకి మార్చాలనుకుంటున్నారా?",
+      "confirm": "అవును, తెలుగులోకి మార్చండి",
+      "dismiss": "English ఉంచండి",
+      "remember": "నా ఎంపికను గుర్తుంచుకో"
+    },
+    "kn": {
+      "title": "ಶಿಫಾರಸು ಮಾಡಿದ ಭಾಷೆ (Recommended Language)",
+      "message": "ನಮಸ್ಕಾರ! ನೀವು ಕನ್ನಡವನ್ನು ಆದ್ಯತೆ ನೀಡುತ್ತಿದ್ದೀರಿ ಎಂದು ತೋರುತ್ತದೆ. ಸಹಕಾರ್ ಸಾಥಿಯನ್ನು ಕನ್ನಡಕ್ಕೆ ಬದಲಾಯಿಸಲು ಬಯಸುವಿರಾ?",
+      "confirm": "ಹೌದು, ಕನ್ನಡಕ್ಕೆ ಬದಲಾಯಿಸಿ",
+      "dismiss": "English ನಲ್ಲಿ ಇರಿಸಿ",
+      "remember": "ನನ್ನ ಆಯ್ಕೆಯನ್ನು ನೆನಪಿಡಿ"
+    },
+    "ml": {
+      "title": "ശുപാർശ ചെയ്യുന്ന ഭാഷ (Recommended Language)",
+      "message": "നമസ്കാരം! നിങ്ങൾ മലയാളത്തിന് മുൻഗണന നൽകുന്നതായി തോന്നുന്നു. സഹകാർ സാഥി മലയാളത്തിലേക്ക് മാറ്റാൻ ആഗ്രഹിക്കുന്നുണ്ടോ?",
+      "confirm": "അതെ, മലയാളത്തിലേക്ക് മാറ്റുക",
+      "dismiss": "English തുടരുക",
+      "remember": "എന്റെ തിരഞ്ഞെടുപ്പ് ഓർക്കുക"
+    },
+    "or": {
+      "title": "ପ୍ରସ୍ତାବିତ ଭାଷା (Recommended Language)",
+      "message": "ନମସ୍କାର! ଲାଗୁଛି ଆପଣ ଓଡ଼ିଆ ଭାଷା ପସନ୍ଦ କରନ୍ତି। ଆପଣ ସହକାର ସାଥୀକୁ ଓଡ଼ିଆରେ ଦେଖିବାକୁ ଚାହାଁନ୍ତି କି?",
+      "confirm": "ହଁ, ଓଡ଼ିଆକୁ ପରିବର୍ତ୍ତନ କରନ୍ତୁ",
+      "dismiss": "English ରେ ରଖନ୍ତୁ",
+      "remember": "ମୋ ପସନ୍ଦ ମନେ ରଖନ୍ତୁ"
+    },
+    "as": {
+      "title": "পৰামৰ্শ দিয়া ভাষা (Recommended Language)",
+      "message": "নমস্কাৰ! আপুনি অসমীয়া ভাষা অগ্ৰাধিকাৰ দিয়া যেন লাগিছে। আপুনি সহকাৰ সাথী অসমীয়াত চাব বিচাৰে নেকি?",
+      "confirm": "হয়, অসমীয়ালৈ সলনি কৰক",
+      "dismiss": "English ত ৰাখক",
+      "remember": "মোৰ পছন্দ মনত ৰাখক"
+    },
+    "ur": {
+      "title": "تجویز کردہ زبان (Recommended Language)",
+      "message": "آداب! ایسا معلوم ہوتا ہے کہ آپ اردو کو ترجیح دیتے ہیں۔ کیا آپ سہکار ساتھی کو اردو میں دیکھنا چاہتے ہیں؟",
+      "confirm": "ہاں، اردو میں تبدیل کریں",
+      "dismiss": "English رکھیں",
+      "remember": "میری پسند یاد رکھیں"
+    }
+  }
+}
