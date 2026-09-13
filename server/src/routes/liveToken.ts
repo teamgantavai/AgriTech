@@ -30,10 +30,16 @@ async function handleGenerateToken(_req: Request, res: Response) {
   try {
     const ai = new GoogleGenAI({ apiKey });
 
-    // Create an ephemeral token valid for 30 minutes
+    const now = Date.now();
+    const expireTime = new Date(now + 30 * 60 * 1000).toISOString();
+    // Allow new sessions to be established anytime within the token's lifetime
+    const newSessionExpireTime = new Date(now + 30 * 60 * 1000).toISOString();
+
+    // Create an ephemeral token valid for 30 minutes with extended newSessionExpireTime
     const token = await ai.authTokens.create({
       config: {
-        expireTime: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        expireTime,
+        newSessionExpireTime,
         httpOptions: { apiVersion: 'v1alpha' },
       }
     });

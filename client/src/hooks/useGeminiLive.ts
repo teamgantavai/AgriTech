@@ -1,623 +1,746 @@
+// ============================================================
+// useGeminiLive — Main orchestration hook
+// State machine + audio pipeline + session management
+// ============================================================
+
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { GoogleGenAI, Modality } from '@google/genai';
-import { LiveAudioRecorder, LiveAudioPlayer } from '../utils/audioStreamer';
+import { VoiceState, OnboardingState } from '../types/voice';
+import type { SessionProfile, ConversationTurn, VoiceMetrics } from '../types/voice';
+import { GeminiLiveSession } from '../services/geminiLive';
+import { loadProfile, updateProfile, detectLanguageFromText, type SupportedLanguage } from '../services/sessionManager';
+import { getLiveToken, clearCachedToken } from '../services/tokenService';
+import { profiler } from '../services/voiceProfiler';
+import { useMicrophone } from './useMicrophone';
+import { useAudioPlayback } from './useAudioPlayback';
 
-export type GeminiLiveState =
-  | 'idle'
-  | 'connecting'
-  | 'listening'
-  | 'speaking'
-  | 'disconnected'
-  | 'error';
+const MAX_RECONNECT_ATTEMPTS = 3;
+const RECONNECT_DELAY_MS = 2000;
 
-export interface LiveTranscriptItem {
-  id: string;
-  role: 'user' | 'assistant';
-  text: string;
-  timestamp: Date;
+interface UseGeminiLiveOptions {
+  onToolCall?: (tool: string, args: Record<string, unknown>) => void;
+  onAnalyserData?: (data: Uint8Array) => void;
+  onMicAnalyserData?: (rms: number) => void;
 }
 
-/**
- * Fast, accurate script and lexicon language detector
- * Supports Indian regional languages and English/Hinglish
- */
-export function detectLanguageFromText(text: string): string {
-  if (!text || text.trim().length === 0) return '';
-  const clean = text.trim();
+export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
+  const { onAnalyserData, onMicAnalyserData } = options;
 
-  // Gurmukhi script -> Punjabi
-  if (/[\u0A00-\u0A7F]/.test(clean)) return 'Punjabi';
+  const [voiceState, setVoiceState] = useState<VoiceState>(VoiceState.IDLE);
+  const [profile, setProfile] = useState<SessionProfile>(loadProfile);
+  const [onboardingState, setOnboardingState] = useState<OnboardingState>(() => {
+    const p = loadProfile();
+    const isReturning = Boolean((p.onboardingComplete || p.onboardingDone) && (p.selectedLanguage || p.language));
+    return isReturning ? OnboardingState.NORMAL_CONVERSATION : OnboardingState.FIRST_START;
+  });
+  const onboardingStateRef = useRef<OnboardingState>(onboardingState);
 
-  // Gujarati script
-  if (/[\u0A80-\u0AFF]/.test(clean)) return 'Gujarati';
+  const updateOnboardingState = useCallback((nextState: OnboardingState) => {
+    console.log(`[ONBOARDING STATE] ${onboardingStateRef.current} -> ${nextState}`);
+    onboardingStateRef.current = nextState;
+    setOnboardingState(nextState);
+  }, []);
+  const [turns, setTurns] = useState<ConversationTurn[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [metrics, setMetrics] = useState<VoiceMetrics>({
+    connectionTimeMs: null,
+    ttfaMs: null,
+    lastTurnDurationMs: null,
+    userSpeechDurationMs: null,
+    assistantResponseDurationMs: null,
+    interruptionCount: 0,
+    reconnectCount: 0,
+    vadFalseActivations: 0,
+    vadActive: false,
+    sessionConnected: false,
+    audioSampleRate: 16000,
+    microphoneInitTimeMs: null,
+    liveConnectionTimeMs: null,
+    liveSetupTimeMs: null,
+    timeFromSpeechEndToFirstAudioMs: null,
+    totalFirstResponseLatencyMs: null,
+    turn1TTFAMs: null,
+    turn2TTFAMs: null,
+    firstTurnReport: null,
+  });
 
-  // Bengali / Assamese script
-  if (/[\u0980-\u09FF]/.test(clean)) return 'Bengali';
+  const sessionRef = useRef<GeminiLiveSession | null>(null);
+  const voiceStateRef = useRef<VoiceState>(VoiceState.IDLE);
+  const reconnectCountRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const turnStartTimeRef = useRef<number>(0);
+  const speechStartTimeRef = useRef<number>(0);
+  const partialAssistantTextRef = useRef('');
+  const isConnectingRef = useRef(false);
+  const ephemeralTokenRef = useRef<{ token: string; model: string } | null>(null);
 
-  // Tamil script
-  if (/[\u0B80-\u0BFF]/.test(clean)) return 'Tamil';
+  // ─── First-turn & First-word Protection Refs ───────────────
+  const earlyAudioBufferRef = useRef<string[]>([]);
+  const turnNumberRef = useRef<number>(1);
 
-  // Telugu script
-  if (/[\u0C00-\u0C7F]/.test(clean)) return 'Telugu';
+  // ─── Strict Turn-Taking State Flags ────────────────────────
+  const userInputLockedRef = useRef(false);
+  const geminiGenerationCompleteRef = useRef(false);
+  const audioPlaybackCompleteRef = useRef(false);
+  const conversationCompletionHandledRef = useRef(false);
+  const processingWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Kannada script
-  if (/[\u0C80-\u0CFF]/.test(clean)) return 'Kannada';
-
-  // Malayalam script
-  if (/[\u0D00-\u0D7F]/.test(clean)) return 'Malayalam';
-
-  // Odia script
-  if (/[\u0B00-\u0B7F]/.test(clean)) return 'Odia';
-
-  // Devanagari script (Hindi, Marathi, Bhojpuri, Maithili, Nepali, etc.)
-  if (/[\u0900-\u097F]/.test(clean)) {
-    // Specific Bhojpuri / Maithili phonemes & common dialect vocabulary
-    if (/(बानी|का हाल|कइसे|रउरा|तोहार|हमरा|काहे|बावे|भइल|करब|गइल|देखब|बबुआ|भैया|बाटे|का हो|हमार|ठीक बानी|कइसन)/i.test(clean)) {
-      return 'Bhojpuri';
-    }
-    // Specific Marathi phonemes / vocabulary
-    if (/[\u0933\u0934]|(आहे|नाही|काय|करा|होते|झाले|पाहिजे|कसे)/i.test(clean)) {
-      return 'Marathi';
-    }
-    return 'Hindi';
-  }
-
-  // Latin characters (English or Hinglish / mixed)
-  if (/[a-zA-Z]/.test(clean)) {
-    const hinglishWords = /\b(kya|kaise|karo|nahi|haan|bhai|sahkar|samiti|aap|mera|meri|kisan|pacs|ji|theek|kuch|chahiye|namaste|sat|sri|akal|kem|cho)\b/i;
-    if (hinglishWords.test(clean)) {
-      return 'Hinglish';
-    }
-    return 'English';
-  }
-
-  return '';
-}
-
-/**
- * Strips out any internal AI reasoning, markdown headers, and thoughts,
- * ensuring only the concise, actual spoken words are displayed.
- */
-export function cleanSpokenText(raw: string): string {
-  if (!raw) return '';
-  return raw
-    // Remove markdown bold thought headers e.g. **Responding to Bhojpuri**
-    .replace(/\*\*[^*]+\*\*/g, '')
-    // Remove italic headers e.g. *Responding to Bhojpuri*
-    .replace(/\*[^*]+\*/g, '')
-    // Remove thought headers like "Responding to ...:" or "Thinking:"
-    .replace(/^(?:Responding to|Thinking|Reasoning)[^\n:]*[:\n]?/gi, '')
-    // Remove thought monologues like "I've processed the user's...", "My response will..."
-    .replace(/(?:I've|I have)\s+processed[^\n.]+[.]?/gi, '')
-    .replace(/(?:My response will|I'll convey|I will convey|I will respond)[^\n.]+[.]?/gi, '')
-    .replace(/^[ \t\r\n]+/gm, '')
-    .trim();
-}
-
-const SAHKAR_SAATHI_SYSTEM_INSTRUCTION = `You are Sahkar Saathi, a friendly, ultra-fast and concise multilingual conversational voice assistant for Indian cooperatives, farmers, PACS (Primary Agricultural Credit Societies), crop insurance, agricultural credit, and government welfare schemes.
-
-CRITICAL INSTRUCTIONS:
-1. Detect and respond in the EXACT same language or dialect the user speaks:
-   - If the user speaks Bhojpuri (e.g. "का हाल बा", "रउरा कइसे बानी", "हम ठीक बानी"), respond warmly and concisely in pure Bhojpuri (e.g. "हम ठीक बानी। रउरा कइसे बानी?").
-   - If the user speaks Punjabi, respond in Punjabi.
-   - If the user speaks Hindi, respond in Hindi.
-   - If the user speaks English, respond in English.
-   - If the user speaks Gujarati, respond in Gujarati.
-   - If the user speaks Tamil, Telugu, Bengali, Marathi, Kannada, Malayalam, Odia, or any other Indian language or regional dialect (like Maithili, Magahi, Marwari, Haryanvi), respond directly in that language/dialect.
-   - Never default to Hindi if the user speaks another language or dialect.
-2. KEEP RESPONSES VERY SHORT AND CONCISE (1 to 2 short spoken sentences only). NEVER speak too much text.
-3. NEVER OUTPUT INTERNAL THOUGHTS OR REASONING:
-   - Do NOT output commentary like "**Responding to Bhojpuri**" or "I've processed the user's greeting...".
-   - Speak ONLY the direct spoken response to the user.
-4. When the user speaks while you are talking, immediately stop speaking and listen.
-5. LIVE WEBSITE CONTROL:
-   - You have direct control over the website. When the user asks to open any scheme or page (e.g., "PM Kisan kholo", "KCC page dikhao", "chat kholo", "home page jao", "dastavez dikhao", "neeche scroll karo", "band karo"), the website automatically opens, navigates, scrolls, or highlights that section on their screen in real time.
-   - Confirm warmly and briefly in 1 spoken sentence (e.g., 'जी, मैंने पीएम किसान का पेज खोल दिया है।' or 'जी, चैट पेज पर आ गए हैं।').
-6. CORE SCHEME KNOWLEDGE ACROSS ALL CATEGORIES (Spoken concisely in max 2 sentences):
-   - PM-KISAN (Farmers): ₹6,000 yearly in 3 equal installments of ₹2,000 directly to bank accounts. Aadhaar and eKYC required.
-   - Kisan Credit Card (KCC): Crop loan up to ₹3 Lakh at 4% effective interest with timely repayment. Apply at bank or PACS.
-   - PM Fasal Bima (PMFBY): Crop insurance at 1.5% to 2% premium against flood, drought, or pest damage. Report crop loss within 72 hours.
-   - Tractor & Equipment Subsidy: 40% to 50% subsidy under SMAM for modern farm equipment.
-   - PACS: Village cooperative society providing subsidized fertilizer, certified seeds, crop credit, and fair market storage.
-   - PM-KUSUM: Up to 60% subsidy for solar water pumps for eco-friendly farm irrigation.
-   - PM Vishwakarma (Artisans & Craftsmen): ₹15,000 free toolkit e-voucher, 5-7 days skill training with ₹500/day stipend, and ₹3 Lakh collateral-free loan at only 5% interest for 18 traditional trades (carpenter, blacksmith, tailor, potter, barber, etc.).
-   - PM SVANidhi (Shopkeepers & Vendors): Collateral-free working capital loans of ₹10,000, ₹20,000, and ₹50,000 with 7% interest subsidy directly into bank account.
-   - PMMY Mudra Loan (Traders & Businesses): Collateral-free enterprise credit up to ₹10 Lakh (Shishu, Kishor, Tarun).
-   - Pashu KCC (Dairy & Livestock): Up to ₹1.60 Lakh collateral-free loan at 4% interest for cattle fodder, dairy care, and goat/poultry farming.
-   - Lakhpati Didi & Drone Didi (Women SHG): Empowering rural women with ₹1 Lakh annual income goal, skill training, and 80% subsidy on agricultural drones.`;
-
-export function useGeminiLive(autoStart: boolean = false) {
-  const [connectionState, setConnectionState] = useState<GeminiLiveState>('idle');
-  const [isMicMuted, setIsMicMuted] = useState(false);
-  const [userVolume, setUserVolume] = useState(0);
-  const [aiVolume, setAiVolume] = useState(0);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [transcriptHistory, setTranscriptHistory] = useState<LiveTranscriptItem[]>([]);
-  const [currentAssistantText, setCurrentAssistantText] = useState('');
-  const [currentUserText, setCurrentUserText] = useState('');
-  const [detectedLanguage, setDetectedLanguage] = useState<string>('');
-
-  const sessionRef = useRef<any>(null);
-  const recorderRef = useRef<LiveAudioRecorder | null>(null);
-  const playerRef = useRef<LiveAudioPlayer | null>(null);
-  const isComponentMounted = useRef(true);
-  const isMutedRef = useRef(false);
-  const isSessionTerminatedRef = useRef(false);
-  const activeAssistantTextRef = useRef('');
-  const activeUserTextRef = useRef('');
-  const vadEndMsRef = useRef<number>(0);
-  const turnStartMsRef = useRef<number>(0);
-  const firstAudioChunkLoggedRef = useRef<boolean>(false);
-
-  // Keep mute ref in sync
   useEffect(() => {
-    isMutedRef.current = isMicMuted;
-  }, [isMicMuted]);
+    profiler.setMetricsCallback((updates) => {
+      setMetrics((prev) => ({ ...prev, ...updates }));
+    });
+  }, []);
 
-  // Clean stop of audio engines
-  const cleanupAudio = useCallback(() => {
-    if (recorderRef.current) {
-      recorderRef.current.stop();
-      recorderRef.current = null;
-    }
-    if (playerRef.current) {
-      playerRef.current.destroy();
-      playerRef.current = null;
-    }
-    if (sessionRef.current) {
-      try {
-        sessionRef.current.close();
-      } catch {}
-      sessionRef.current = null;
+  const clearProcessingWatchdog = useCallback(() => {
+    if (processingWatchdogRef.current) {
+      clearTimeout(processingWatchdogRef.current);
+      processingWatchdogRef.current = null;
     }
   }, []);
 
-  /**
-   * Request ephemeral token from server and establish Gemini Live Session
-   */
-  const startSession = useCallback(async () => {
-    isSessionTerminatedRef.current = false;
-    cleanupAudio();
-    setErrorMessage(null);
-    setConnectionState('connecting');
-    console.log('[GeminiLive] Connection state: connecting');
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
-    try {
-      // 1. Fetch short-lived ephemeral token from secure server endpoint
-      const tokenResponse = await fetch('/api/live/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+  const updateState = useCallback((newState: VoiceState) => {
+    voiceStateRef.current = newState;
+    setVoiceState(newState);
+  }, []);
+
+  const updateMetric = useCallback((key: string, value: number | boolean | string) => {
+    setMetrics((prev) => ({ ...prev, [key]: value }));
+  }, []);
+
+  const playbackRef = useRef<any>(null);
+  const micRef = useRef<any>(null);
+
+  // ─── Finish Speaking & Unlock Microphone ───────────────────
+  // Called ONLY when BOTH geminiGenerationComplete AND audioPlaybackComplete are true
+  const finishSpeaking = useCallback(() => {
+    clearProcessingWatchdog();
+
+    if (onboardingStateRef.current === OnboardingState.LANGUAGE_QUESTION) {
+      // AI has finished asking "Which language would you like to speak in?"
+      updateOnboardingState(OnboardingState.WAITING_FOR_LANGUAGE);
+      userInputLockedRef.current = false;
+      updateMetric('userInputLocked', false);
+      micRef.current?.resetVAD();
+      updateState(VoiceState.READY_FOR_USER);
+      console.log('[INPUT] microphone unlocked — waiting for user language choice');
+      setTimeout(() => {
+        if (voiceStateRef.current === VoiceState.READY_FOR_USER) {
+          updateState(VoiceState.LISTENING);
+          console.log('[STATE] LISTENING (waiting for language)');
+        }
+      }, 100);
+      return;
+    }
+
+    if (
+      onboardingStateRef.current === OnboardingState.LANGUAGE_SELECTED ||
+      onboardingStateRef.current === OnboardingState.READY_FOR_HELP
+    ) {
+      // AI has finished asking "Sure! How can I help you?" in the selected language
+      updateOnboardingState(OnboardingState.NORMAL_CONVERSATION);
+      const updated = updateProfile({
+        onboardingComplete: true,
+        onboardingDone: true,
       });
+      setProfile(updated);
+      console.log('[useGeminiLive] Language onboarding complete! Saved profile:', updated);
 
-      if (!tokenResponse.ok) {
-        const errJson = await tokenResponse.json().catch(() => ({}));
-        throw new Error(errJson.error || 'Failed to authenticate with Gemini Live server.');
-      }
-
-      const { token, model } = await tokenResponse.json();
-
-      if (!token) {
-        throw new Error('No ephemeral authentication token received from server.');
-      }
-
-      // 2. Initialize @google/genai client using ephemeral token and v1alpha
-      const ai = new GoogleGenAI({
-        apiKey: token,
-        httpOptions: { apiVersion: 'v1alpha' },
-      });
-
-      // 3. Initialize Audio Player (24kHz playback with seamless gapless queuing)
-      const player = new LiveAudioPlayer(
-        (vol) => {
-          if (isComponentMounted.current) setAiVolume(vol);
-        },
-        (isSpeaking) => {
-          if (isComponentMounted.current) {
-            setConnectionState(isSpeaking ? 'speaking' : 'listening');
-          }
-          // Coordinate with recorder so AI audio is not heard as user speech
-          if (recorderRef.current) {
-            recorderRef.current.setAiSpeaking(isSpeaking);
-          }
-        },
-        () => {
-          const tNow = performance.now();
-          const vadEnd = vadEndMsRef.current || turnStartMsRef.current;
-          console.log(`🔊 [AUDIO PLAYBACK START] Gemini Live first audio packet playback started at +${(tNow - vadEnd).toFixed(1)}ms`);
-          if (vadEnd > 0) {
-            console.log(`🚀 [TOTAL LATENCY] User speech stopped → Gemini Live audio playing: ${(tNow - vadEnd).toFixed(1)}ms`);
-          }
+      userInputLockedRef.current = false;
+      updateMetric('userInputLocked', false);
+      micRef.current?.resetVAD();
+      updateState(VoiceState.READY_FOR_USER);
+      console.log('[INPUT] microphone unlocked — ready for normal conversation');
+      setTimeout(() => {
+        if (voiceStateRef.current === VoiceState.READY_FOR_USER) {
+          updateState(VoiceState.LISTENING);
+          console.log('[STATE] LISTENING (normal conversation)');
         }
-      );
-      playerRef.current = player;
+      }, 100);
+      return;
+    }
 
-      // 4. Initialize Audio Recorder (16kHz PCM capture with browser echo cancellation & VAD noise suppression)
-      const recorder = new LiveAudioRecorder(
-        (base64Chunk) => {
-          if (isMutedRef.current) return;
-          if (sessionRef.current) {
-            try {
-              // Real-time bidirectional streaming
-              sessionRef.current.sendRealtimeInput({
-                media: {
-                  mimeType: 'audio/pcm;rate=16000',
-                  data: base64Chunk,
-                },
-              });
-            } catch (err) {
-              console.warn('[GeminiLive] Error sending audio chunk:', err);
-            }
-          }
-        },
-        (vol) => {
-          if (isComponentMounted.current) {
-            setUserVolume(vol);
-          }
-        },
-        (isSpeaking) => {
-          if (isComponentMounted.current && !playerRef.current?.isPlaying) {
-            if (isSpeaking) {
-              setConnectionState('listening');
-            }
-          }
+    // Normal conversation turn:
+    updateState(VoiceState.READY_FOR_USER);
+    console.log('[STATE] READY_FOR_USER');
+
+    userInputLockedRef.current = false;
+    updateMetric('userInputLocked', false);
+    console.log('[INPUT] microphone unlocked');
+
+    // Cleanly purge any energy/silence timers accumulated during speaking
+    micRef.current?.resetVAD();
+
+    // Prompt, seamless transition to LISTENING
+    setTimeout(() => {
+      if (voiceStateRef.current === VoiceState.READY_FOR_USER) {
+        updateState(VoiceState.LISTENING);
+        console.log('[STATE] LISTENING');
+      }
+    }, 100);
+  }, [updateState, updateMetric, clearProcessingWatchdog, updateOnboardingState]);
+
+  // ─── Single Completion Condition Check ─────────────────────
+  const checkConversationCompletion = useCallback(() => {
+    const isActuallyPlaying = playbackRef.current?.isPlaying?.() ?? false;
+    if (
+      geminiGenerationCompleteRef.current &&
+      (audioPlaybackCompleteRef.current || !isActuallyPlaying) &&
+      !conversationCompletionHandledRef.current
+    ) {
+      conversationCompletionHandledRef.current = true;
+      finishSpeaking();
+    }
+  }, [finishSpeaking]);
+
+  // ─── Audio Playback ────────────────────────────────────────
+  const playback = useAudioPlayback({
+    onPlaybackStart: () => {
+      clearProcessingWatchdog();
+      // Lock user input during playback
+      userInputLockedRef.current = true;
+      updateMetric('userInputLocked', true);
+      updateState(VoiceState.AI_SPEAKING);
+      console.log('[STATE] AI_SPEAKING');
+    },
+    onPlaybackComplete: () => {
+      audioPlaybackCompleteRef.current = true;
+      checkConversationCompletion();
+    },
+    onFirstAudioPlayback: () => {
+      profiler.recordTurnPlaybackStart(turnNumberRef.current);
+    },
+    onAnalyserData,
+  });
+  playbackRef.current = playback;
+
+  // ─── Microphone ────────────────────────────────────────────
+  const mic = useMicrophone({
+    isInputLocked: () => userInputLockedRef.current,
+    onPermissionRequest: () => profiler.mark('MIC_PERMISSION_REQUEST'),
+    onPermissionGranted: () => profiler.mark('MIC_PERMISSION_GRANTED'),
+    onAudioContextCreated: () => profiler.mark('AUDIO_CONTEXT_CREATED'),
+    onVADInitialized: () => profiler.mark('VAD_INITIALIZED'),
+    onAudioChunk: (base64: string) => {
+      // Never send microphone audio to Gemini if input is locked (AI speaking)
+      if (userInputLockedRef.current) {
+        return;
+      }
+      if (!sessionRef.current?.connected) {
+        // Critical first-word protection: buffer audio while Live session is connecting
+        if (earlyAudioBufferRef.current.length < 35) {
+          earlyAudioBufferRef.current.push(base64);
         }
-      );
-      recorderRef.current = recorder;
-
-      // 5. Connect to Gemini Live WebSocket with tuned VAD & Multilingual Transcription
-      const liveModel = model || 'gemini-2.5-flash-native-audio-latest';
-      console.log(`[GeminiLive] Connecting to model: ${liveModel}`);
-
-      const session = await ai.live.connect({
-        model: liveModel,
-        config: {
-          responseModalities: [Modality.AUDIO],
-          systemInstruction: {
-            parts: [{ text: SAHKAR_SAATHI_SYSTEM_INSTRUCTION }],
-          },
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: {
-                voiceName: 'Aoede', // Natural, clear multilingual voice
-              },
-            },
-          },
-          thinkingConfig: {
-            thinkingBudget: 0,
-          },
-          // Enable input & output transcription for real-time speech-to-text & language detection
-          inputAudioTranscription: {},
-          outputAudioTranscription: {},
-        },
-        callbacks: {
-          onopen: () => {
-            console.log('✅ [GeminiLive] WebSocket session opened.');
-            if (isComponentMounted.current) {
-              setConnectionState('listening');
-            }
-          },
-
-          onmessage: (message: any) => {
-            // Handle server content (audio + text + interruption events)
-            if (message?.serverContent) {
-              const { modelTurn, interrupted, turnComplete, outputTranscription, inputTranscription } =
-                message.serverContent;
-
-              // Genuine server VAD detected that user intentionally started speaking -> Barge-in
-              if (interrupted) {
-                console.log('🗣️ [GeminiLive] Interruption detected: User intentional speech started.');
-                player.stopAll();
-                if (recorderRef.current) {
-                  recorderRef.current.setAiSpeaking(false);
-                }
-                const spokenText = cleanSpokenText(activeAssistantTextRef.current);
-                if (spokenText) {
-                  const finalMsg: LiveTranscriptItem = {
-                    id: 'ai-' + Date.now(),
-                    role: 'assistant',
-                    text: spokenText,
-                    timestamp: new Date(),
-                  };
-                  if (isComponentMounted.current) {
-                    setTranscriptHistory((prev) => [...prev, finalMsg]);
-                  }
-                }
-                activeAssistantTextRef.current = '';
-                if (isComponentMounted.current) {
-                  setCurrentAssistantText('');
-                  setConnectionState('listening');
-                }
-              }
-
-              // Process model output audio chunks
-              if (modelTurn?.parts) {
-                if (!firstAudioChunkLoggedRef.current) {
-                  firstAudioChunkLoggedRef.current = true;
-                  turnStartMsRef.current = performance.now();
-                  const vadEnd = vadEndMsRef.current || turnStartMsRef.current;
-                  console.log(`⏱️ [FIRST AUDIO CHUNK] Model response packet arrived at +${(turnStartMsRef.current - vadEnd).toFixed(1)}ms`);
-                }
-                for (const part of modelTurn.parts) {
-                  // Audio Part -> Queue for smooth 24kHz playback
-                  if (part.inlineData?.data) {
-                    if (typeof window !== 'undefined' && 'speechSynthesis' in window && window.speechSynthesis.speaking) {
-                      try { window.speechSynthesis.cancel(); } catch {}
-                    }
-                    player.queueAudio(part.inlineData.data);
-                  }
-                  // Internal reasoning / thoughts emitted by model -> SKIP completely!
-                  if (part.thought) {
-                    continue;
-                  }
-                  // Fallback: If not thought and outputTranscription isn't active
-                  if (part.text && !outputTranscription) {
-                    const cleaned = cleanSpokenText(part.text);
-                    if (cleaned && !activeAssistantTextRef.current.includes(cleaned)) {
-                      activeAssistantTextRef.current += cleaned;
-                      if (isComponentMounted.current) {
-                        setCurrentAssistantText(cleanSpokenText(activeAssistantTextRef.current));
-                        const lang = detectLanguageFromText(activeAssistantTextRef.current);
-                        if (lang) setDetectedLanguage(lang);
-                      }
-                    }
-                  }
-                }
-              }
-
-              // Real-time output transcription (exact words spoken by AI audio)
-              if (outputTranscription?.text) {
-                activeAssistantTextRef.current += outputTranscription.text;
-                const cleanDisplay = cleanSpokenText(activeAssistantTextRef.current);
-                if (isComponentMounted.current) {
-                  setCurrentAssistantText(cleanDisplay);
-                  const lang = detectLanguageFromText(cleanDisplay);
-                  if (lang) {
-                    console.log(`[GeminiLive] Selected response language: ${lang}`);
-                    setDetectedLanguage(lang);
-                  }
-                }
-              }
-
-              // Real-time user input transcription (words spoken by user)
-              if (inputTranscription?.parts) {
-                vadEndMsRef.current = performance.now();
-                firstAudioChunkLoggedRef.current = false;
-                for (const part of inputTranscription.parts) {
-                  if (part.text) {
-                    console.log(`[GeminiLive] User speech activity detected: "${part.text}"`);
-                    activeUserTextRef.current += part.text;
-                    if (isComponentMounted.current) {
-                      setCurrentUserText(activeUserTextRef.current);
-                      const userLang = detectLanguageFromText(activeUserTextRef.current);
-                      if (userLang) {
-                        console.log(`[GeminiLive] User speech language detected: ${userLang}`);
-                        setDetectedLanguage(userLang);
-                      }
-                    }
-                  }
-                }
-              }
-
-              // Turn Complete -> Commit to transcript history
-              if (turnComplete) {
-                console.log('[GeminiLive] Turn completed.');
-                firstAudioChunkLoggedRef.current = false;
-                const spokenText = cleanSpokenText(activeAssistantTextRef.current);
-                if (spokenText) {
-                  const finalMsg: LiveTranscriptItem = {
-                    id: 'ai-' + Date.now(),
-                    role: 'assistant',
-                    text: spokenText,
-                    timestamp: new Date(),
-                  };
-                  if (isComponentMounted.current) {
-                    setTranscriptHistory((prev) => [...prev, finalMsg]);
-                  }
-                }
-                activeAssistantTextRef.current = '';
-                if (isComponentMounted.current) {
-                  setCurrentAssistantText('');
-                }
-              }
-            }
-          },
-
-          onerror: (err: any) => {
-            console.error('[GeminiLive] WebSocket error:', err);
-            if (isComponentMounted.current) {
-              setErrorMessage('Gemini Live connection encountered an error.');
-              setConnectionState('error');
-            }
-          },
-
-          onclose: (event: any) => {
-            console.log('[GeminiLive] WebSocket connection closed:', event?.code, event?.reason || '');
-            if (isComponentMounted.current) {
-              setConnectionState(isSessionTerminatedRef.current ? 'idle' : 'disconnected');
-            }
-            cleanupAudio();
-          },
-        },
-      });
-
-      sessionRef.current = session;
-
-      // Start recording from microphone once session is ready
-      try {
-        await recorder.start();
-        console.log('🎤 [GeminiLive] Microphone recording started with VAD filtering.');
-      } catch (micErr: any) {
-        console.error('[GeminiLive] Microphone access error:', micErr);
-        if (isComponentMounted.current) {
-          setErrorMessage(
-            micErr?.name === 'NotAllowedError'
-              ? 'Microphone permission denied. Please allow microphone access to talk.'
-              : 'Could not access microphone.'
-          );
-          setConnectionState('error');
-        }
+        return;
       }
-
-      // NOTE: We deliberately do NOT inject any hardcoded Hindi turn here!
-      // The session starts in an unbiased, neutral listening state.
-      // The first utterance spoken by the user determines the language immediately!
-    } catch (err: any) {
-      console.error('[GeminiLive] Session start failed:', err);
-      cleanupAudio();
-      if (isComponentMounted.current) {
-        setErrorMessage(err?.message || 'Failed to connect to Gemini Live.');
-        setConnectionState('error');
+      sessionRef.current.sendAudio(base64);
+      profiler.mark('FIRST_USER_AUDIO_SENT');
+    },
+    onVADChange: (isSpeech, rms) => {
+      if (userInputLockedRef.current) {
+        updateMetric('vadActive', false);
+        onMicAnalyserData?.(0);
+        return;
       }
-    }
-  }, [cleanupAudio]);
-
-  /**
-   * End current live conversation
-   */
-  const endSession = useCallback(() => {
-    isSessionTerminatedRef.current = true;
-    cleanupAudio();
-    setConnectionState('idle');
-    setUserVolume(0);
-    setAiVolume(0);
-    setCurrentAssistantText('');
-    setCurrentUserText('');
-  }, [cleanupAudio]);
-
-  /**
-   * Toggle microphone mute
-   */
-  const toggleMicMute = useCallback(() => {
-    setIsMicMuted((prev) => !prev);
-  }, []);
-
-  /**
-   * Interrupt AI speech manually and silence any competing voice
-   */
-  const interruptAI = useCallback(() => {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      try { window.speechSynthesis.cancel(); } catch {}
-    }
-    if (playerRef.current) {
-      playerRef.current.stopAll();
-      setConnectionState('listening');
-    }
-  }, []);
-
-  /**
-   * Push to talk active state toggle
-   */
-  const setPushToTalkActive = useCallback((active: boolean) => {
-    if (recorderRef.current) {
-      recorderRef.current.setPushToTalkActive(active);
-    }
-  }, []);
-
-  /**
-   * Reconnect to session
-   */
-  const reconnect = useCallback(() => {
-    startSession();
-  }, [startSession]);
-
-  /**
-   * Send a client prompt / query to the live session
-   * Automatically connects if session is not active yet
-   */
-  const sendUserPrompt = useCallback(
-    async (promptText: string) => {
-      if (!promptText.trim()) return;
-      if (isSessionTerminatedRef.current) return;
-
-      // Immediately silence any active SpeechSynthesis utterance and live audio
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        try { window.speechSynthesis.cancel(); } catch {}
+      updateMetric('vadActive', isSpeech);
+      onMicAnalyserData?.(rms);
+    },
+    onSpeechStart: () => {
+      // Strictly ignore speech while user input is locked
+      if (userInputLockedRef.current) {
+        return;
       }
-      if (playerRef.current) {
-        playerRef.current.stopAll();
-      }
-
-      if (!sessionRef.current) {
-        await startSession();
-      }
-
-      // Wait up to 3 seconds for session to initialize if starting fresh
-      let retries = 0;
-      while (!sessionRef.current && retries < 15) {
-        await new Promise((r) => setTimeout(r, 200));
-        retries++;
-      }
-
-      if (sessionRef.current) {
-        try {
-          console.log(`[GeminiLive] Sending user prompt: "${promptText}"`);
-          sessionRef.current.sendClientContent({
-            turns: [
-              {
-                role: 'user',
-                parts: [{ text: promptText }],
-              },
-            ],
-            turnComplete: true,
-          });
-          setCurrentUserText(promptText);
-          setTranscriptHistory((prev) => [
-            ...prev,
-            {
-              id: 'u-' + Date.now(),
-              role: 'user',
-              text: promptText,
-              timestamp: new Date(),
-            },
-          ]);
-        } catch (err) {
-          console.error('[GeminiLive] Error sending client prompt:', err);
-        }
+      speechStartTimeRef.current = Date.now();
+      // If user resumed speaking while in PROCESSING before Gemini responded, return to LISTENING
+      if (voiceStateRef.current === VoiceState.PROCESSING) {
+        clearProcessingWatchdog();
+        updateState(VoiceState.LISTENING);
       }
     },
-    [startSession]
-  );
-
-  // Auto-start if requested
-  useEffect(() => {
-    isComponentMounted.current = true;
-    if (autoStart) {
-      startSession();
-    }
-    return () => {
-      isComponentMounted.current = false;
-      cleanupAudio();
-    };
-  }, [autoStart, startSession, cleanupAudio]);
-
-  // Listen for global stop-all-audio event (e.g. triggered when SpeechSynthesis starts)
-  useEffect(() => {
-    const handleGlobalStop = () => {
-      if (playerRef.current) {
-        playerRef.current.stopAll();
+    onSpeechEnd: () => {
+      // Strictly ignore speech while user input is locked
+      if (userInputLockedRef.current) {
+        return;
       }
+
+      const duration = Date.now() - speechStartTimeRef.current;
+      updateMetric('userSpeechDurationMs', duration);
+
+      if (
+        voiceStateRef.current === VoiceState.LISTENING ||
+        voiceStateRef.current === VoiceState.READY_FOR_USER
+      ) {
+        // Note: Do NOT lock user input here!
+        // Silence frames must continue to be sent to Gemini so server-side VAD
+        // detects the 600ms trailing silence and triggers generation.
+        geminiGenerationCompleteRef.current = false;
+        audioPlaybackCompleteRef.current = false;
+        conversationCompletionHandledRef.current = false;
+
+        updateState(VoiceState.PROCESSING);
+        console.log('[STATE] PROCESSING');
+
+        profiler.recordTurnSpeechEnd(turnNumberRef.current);
+
+        // Explicitly notify Gemini server that the user's speech utterance has concluded
+        sessionRef.current?.signalAudioStreamEnd();
+
+        sessionRef.current?.resetFirstAudioTimer();
+        turnStartTimeRef.current = Date.now();
+
+        // 15s watchdog so UI never hangs in "Thinking..." if Gemini fails to answer
+        clearProcessingWatchdog();
+        processingWatchdogRef.current = setTimeout(() => {
+          if (voiceStateRef.current === VoiceState.PROCESSING) {
+            console.warn('[GeminiLive] Response timeout in PROCESSING, returning to LISTENING');
+            userInputLockedRef.current = false;
+            updateMetric('userInputLocked', false);
+            updateState(VoiceState.LISTENING);
+            console.log('[STATE] LISTENING');
+          }
+        }, 15000);
+      }
+    },
+    onError: (err) => {
+      console.error('[useGeminiLive] Mic error:', err);
+      handleError(err.message || 'Microphone error');
+    },
+  });
+  micRef.current = mic;
+
+  const handleError = useCallback((msg: string) => {
+    clearProcessingWatchdog();
+    setError(msg);
+    userInputLockedRef.current = false;
+    updateMetric('userInputLocked', false);
+    updateState(VoiceState.ERROR);
+    playback.stopAll();
+  }, [updateState, updateMetric, playback, clearProcessingWatchdog]);
+
+  // ─── Profile Extraction ────────────────────────────────────
+  const extractProfileUpdates = useCallback((text: string) => {
+    // Detect occupation mentions (saved contextually only when relevant/mentioned)
+    const occupationPatterns: [RegExp, string][] = [
+      [/\b(farmer|kisan|किसान|ਕਿਸਾਨ|खेती|ਖੇਤੀ)\b/i, 'farmer'],
+      [/\b(student|छात्र|विद्यार्थी|ਵਿਦਿਆਰਥੀ)\b/i, 'student'],
+      [/\b(teacher|शिक्षक|ਅਧਿਆਪਕ)\b/i, 'teacher'],
+      [/\b(shopkeeper|dukaan|दुकानदार|ਦੁਕਾਨਦਾਰ|व्यापारी)\b/i, 'shopkeeper'],
+      [/\b(worker|labour|मजदूर|ਮਜ਼ਦੂਰ|mazdoor)\b/i, 'worker'],
+      [/\b(homemaker|housewife|गृहिणी|ਘਰੇਲੂ)\b/i, 'homemaker'],
+      [/\b(business|व्यवसाय|businessman|ਕਾਰੋਬਾਰ)\b/i, 'business owner'],
+    ];
+
+    let occupationFound: string | null = null;
+    for (const [pattern, occupation] of occupationPatterns) {
+      if (pattern.test(text)) {
+        occupationFound = occupation;
+        break;
+      }
+    }
+
+    // Name pattern: "my name is X", "main X hoon"
+    const nameMatch =
+      text.match(/my name is (\w+)/i) ||
+      text.match(/मेरा नाम (\S+)/i) ||
+      text.match(/ਮੇਰਾ ਨਾਮ (\S+)/i) ||
+      text.match(/I am (\w+)/i);
+
+    let updated = false;
+    const currentProfile = loadProfile();
+
+    if (occupationFound && !currentProfile.occupation) {
+      const newProfile = updateProfile({
+        occupation: occupationFound,
+      });
+      setProfile(newProfile);
+      updated = true;
+    }
+
+    if (nameMatch?.[1] && !currentProfile.nameIfProvided) {
+      const newProfile = updateProfile({ nameIfProvided: nameMatch[1] });
+      setProfile(newProfile);
+      updated = true;
+    }
+
+    // Language detection from user utterance or language switch intent
+    const detectedLang = detectLanguageFromText(text);
+    if (detectedLang) {
+      const currentLang = currentProfile.selectedLanguage || currentProfile.language;
+      if (currentLang !== detectedLang.name) {
+        const newProfile = updateProfile({
+          selectedLanguage: detectedLang.name,
+          language: detectedLang.name,
+          languageCode: detectedLang.code,
+        });
+        setProfile(newProfile);
+        updated = true;
+      }
+    }
+
+    if (updated) {
+      console.log('[useGeminiLive] Profile updated:', loadProfile());
+    }
+  }, []);
+
+  // ─── Connect Session (Parallel Initialization) ──────────────
+  const connect = useCallback(async () => {
+    if (isConnectingRef.current || voiceStateRef.current === VoiceState.CONNECTING) return;
+    isConnectingRef.current = true;
+    clearProcessingWatchdog();
+    profiler.mark('VOICE_BUTTON_CLICK');
+    updateState(VoiceState.PREPARING);
+    console.log('[STATE] PREPARING (voice button clicked)');
+    setError(null);
+
+    // 1. Immediately pre-warm AudioContext synchronously within user click event
+    playback.prewarmAudioContext();
+
+    try {
+      // Disconnect any existing session
+      sessionRef.current?.disconnect();
+      sessionRef.current = null;
+      playback.stopAll();
+      earlyAudioBufferRef.current = [];
+
+      profiler.mark('LIVE_SESSION_START');
+
+      // 2. Concurrently start microphone and Gemini Live session
+      const micPromise = mic.start();
+
+      const sessionPromise = (async () => {
+        // Always fetch a guaranteed fresh token when connecting or reconnecting
+        const tokenData = await getLiveToken(true);
+        ephemeralTokenRef.current = tokenData;
+
+        const liveSession = new GeminiLiveSession({
+          events: {
+            onConnect: () => {
+              profiler.mark('LIVE_SESSION_CONNECTED');
+              isConnectingRef.current = false;
+              reconnectCountRef.current = 0;
+              updateMetric('sessionConnected', true);
+
+              const currentP = loadProfile();
+              const hasLang = Boolean(currentP.selectedLanguage || currentP.language);
+              const isComplete = Boolean(currentP.onboardingComplete || currentP.onboardingDone);
+
+              if (isComplete && hasLang) {
+                // ── RETURNING USER: Greet directly in chosen language ──
+                const langName = currentP.selectedLanguage || currentP.language;
+                console.log(`[useGeminiLive] Returning user session connected (${langName})`);
+                updateOnboardingState(OnboardingState.NORMAL_CONVERSATION);
+
+                // Lock microphone while AI produces and speaks the greeting
+                userInputLockedRef.current = true;
+                updateMetric('userInputLocked', true);
+                updateState(VoiceState.PROCESSING);
+
+                sessionRef.current?.sendClientContent(
+                  `[Returning user connected] Greet the returning user in ${langName} with a short natural question equivalent to: 'How can I help you?' (e.g. in Hindi: 'ठीक है! मैं आपकी कैसे मदद कर सकता हूँ?', Punjabi: 'ਠੀਕ ਹੈ! ਮੈਂ ਤੁਹਾਡੀ ਕਿਵੇਂ ਮਦਦ ਕਰ ਸਕਦਾ ਹਾਂ?', English: 'Sure! How can I help you?'). Do NOT ask for their language.`
+                );
+              } else {
+                // ── FIRST-TIME USER: Immediately ask for language ──
+                console.log('[useGeminiLive] First-time user connected. Asking language question.');
+                updateOnboardingState(OnboardingState.LANGUAGE_QUESTION);
+
+                // Lock microphone while AI asks language question
+                userInputLockedRef.current = true;
+                updateMetric('userInputLocked', true);
+                updateState(VoiceState.PROCESSING);
+
+                sessionRef.current?.sendClientContent(
+                  `[First interaction] Start now by asking ONLY the short English question: 'Which language would you like to speak in?' Do not say anything else.`
+                );
+              }
+            },
+            onSetupSent: () => {
+              profiler.mark('LIVE_SETUP_SENT');
+            },
+            onFirstResponseEvent: () => {
+              profiler.mark('FIRST_GEMINI_RESPONSE_EVENT');
+            },
+            onAudioChunk: (pcm, generationId) => {
+              clearProcessingWatchdog();
+              profiler.recordTurnFirstAudio(turnNumberRef.current);
+
+              // 🔒 Lock user input as soon as Gemini begins producing an answer
+              if (!userInputLockedRef.current) {
+                userInputLockedRef.current = true;
+                updateMetric('userInputLocked', true);
+                console.log('[INPUT] microphone locked');
+              }
+              playback.enqueueChunk(
+                pcm,
+                generationId ?? sessionRef.current?.currentGenerationId ?? 0
+              );
+              // Track TTFA
+              if (voiceStateRef.current === VoiceState.PROCESSING) {
+                const ttfa = Date.now() - turnStartTimeRef.current;
+                updateMetric('ttfaMs', ttfa);
+                setMetrics((prev) => ({ ...prev, ttfaMs: ttfa }));
+              }
+            },
+            onTurnComplete: (generationId) => {
+              clearProcessingWatchdog();
+              console.log(`[GEMINI] generation complete for turn ${turnNumberRef.current}`);
+              geminiGenerationCompleteRef.current = true;
+
+              playback.markTurnComplete(
+                generationId ?? sessionRef.current?.currentGenerationId ?? 0
+              );
+
+              // In case audio already finished (or 0 chunks received)
+              checkConversationCompletion();
+
+              // Finalize assistant turn text
+              if (partialAssistantTextRef.current.trim()) {
+                setTurns((prev) => {
+                  const last = prev[prev.length - 1];
+                  if (last?.role === 'assistant' && last.isPartial) {
+                    return [
+                      ...prev.slice(0, -1),
+                      { ...last, isPartial: false, text: partialAssistantTextRef.current },
+                    ];
+                  }
+                  return prev;
+                });
+                partialAssistantTextRef.current = '';
+              }
+
+              turnNumberRef.current += 1;
+            },
+            onInterrupted: () => {
+              // Barge-in disabled for strict turn-taking
+              console.log('[GeminiLive] Interrupted event ignored (strict turn-taking active)');
+            },
+            onToolCall: (toolCall) => {
+              optionsRef.current.onToolCall?.(toolCall.name, toolCall.args);
+            },
+            onError: (err) => {
+              isConnectingRef.current = false;
+              clearCachedToken();
+              console.error('[useGeminiLive] Session error:', err);
+              scheduleReconnect();
+            },
+            onDisconnect: () => {
+              isConnectingRef.current = false;
+              clearCachedToken();
+              updateMetric('sessionConnected', false);
+              if (
+                voiceStateRef.current !== VoiceState.IDLE &&
+                voiceStateRef.current !== VoiceState.ERROR
+              ) {
+                scheduleReconnect();
+              }
+            },
+            onTranscript: (text, isUser, isPartial) => {
+              if (!text) return;
+              if (isUser) {
+                // Add user turn
+                setTurns((prev) => {
+                  const last = prev[prev.length - 1];
+                  if (last?.role === 'user' && isPartial) {
+                    return [
+                      ...prev.slice(0, -1),
+                      { ...last, text, isPartial: true },
+                    ];
+                  }
+                  return [
+                    ...prev,
+                    {
+                      id: `user-${Date.now()}`,
+                      role: 'user' as const,
+                      text,
+                      timestamp: Date.now(),
+                      isPartial,
+                    },
+                  ];
+                });
+
+                // Detect chosen language from user speech
+                const detected = detectLanguageFromText(text);
+                if (detected) {
+                  console.log('[useGeminiLive] Detected language from user utterance:', detected.name);
+                  const updated = updateProfile({
+                    selectedLanguage: detected.name,
+                    language: detected.name,
+                    languageCode: detected.code,
+                  });
+                  setProfile(updated);
+
+                  if (
+                    onboardingStateRef.current === OnboardingState.WAITING_FOR_LANGUAGE ||
+                    onboardingStateRef.current === OnboardingState.LANGUAGE_QUESTION ||
+                    onboardingStateRef.current === OnboardingState.FIRST_START
+                  ) {
+                    updateOnboardingState(OnboardingState.LANGUAGE_SELECTED);
+                  }
+                }
+
+                // Extract occupation or other profile details if mentioned
+                extractProfileUpdates(text);
+              } else {
+                // Assistant turn
+                partialAssistantTextRef.current = text;
+                setTurns((prev) => {
+                  const last = prev[prev.length - 1];
+                  if (last?.role === 'assistant' && last.isPartial) {
+                    return [
+                      ...prev.slice(0, -1),
+                      { ...last, text, isPartial: true },
+                    ];
+                  }
+                  return [
+                    ...prev,
+                    {
+                      id: `asst-${Date.now()}`,
+                      role: 'assistant' as const,
+                      text,
+                      timestamp: Date.now(),
+                      isPartial: true,
+                    },
+                  ];
+                });
+
+                // If in onboarding, verify detected language from assistant confirmation
+                if (
+                  onboardingStateRef.current === OnboardingState.LANGUAGE_SELECTED ||
+                  onboardingStateRef.current === OnboardingState.WAITING_FOR_LANGUAGE
+                ) {
+                  const detectedFromAsst = detectLanguageFromText(text);
+                  if (detectedFromAsst) {
+                    const updated = updateProfile({
+                      selectedLanguage: detectedFromAsst.name,
+                      language: detectedFromAsst.name,
+                      languageCode: detectedFromAsst.code,
+                    });
+                    setProfile(updated);
+                  }
+                  updateOnboardingState(OnboardingState.READY_FOR_HELP);
+                }
+              }
+            },
+          },
+          onMetric: updateMetric,
+        });
+
+        sessionRef.current = liveSession;
+        await liveSession.connect(tokenData.token, tokenData.model);
+      })();
+
+      // Concurrently wait for mic and live session
+      await Promise.all([micPromise, sessionPromise]);
+    } catch (err: any) {
+      isConnectingRef.current = false;
+      console.error('[useGeminiLive] Connect failed:', err);
+
+      const msg = err?.message || String(err);
+      if (msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('denied')) {
+        handleError('Microphone permission denied. Please allow mic access and try again.');
+      } else {
+        handleError(msg || 'Connection failed');
+      }
+    }
+  }, [mic, playback, updateState, updateMetric, handleError, checkConversationCompletion, clearProcessingWatchdog, extractProfileUpdates]);
+
+  // ─── Reconnect Logic ───────────────────────────────────────
+  const scheduleReconnect = useCallback(() => {
+    if (reconnectCountRef.current >= MAX_RECONNECT_ATTEMPTS) {
+      handleError('Connection lost. Please try again.');
+      return;
+    }
+    reconnectCountRef.current += 1;
+    updateState(VoiceState.RECONNECTING);
+    setMetrics((prev) => ({
+      ...prev,
+      reconnectCount: reconnectCountRef.current,
+    }));
+
+    const delay = RECONNECT_DELAY_MS * reconnectCountRef.current;
+    console.log(`[useGeminiLive] Reconnecting in ${delay}ms (attempt ${reconnectCountRef.current})`);
+
+    reconnectTimerRef.current = setTimeout(() => {
+      connect();
+    }, delay);
+  }, [connect, handleError, updateState]);
+
+  // ─── Set Language (Manual Selection / Switching) ─────────────
+  const setLanguage = useCallback((lang: SupportedLanguage | null) => {
+    const updated = updateProfile({
+      selectedLanguage: lang ? lang.name : null,
+      language: lang ? lang.name : null,
+      languageCode: lang ? lang.code : null,
+      onboardingComplete: true,
+      onboardingDone: true,
+    });
+    setProfile(updated);
+    updateOnboardingState(OnboardingState.NORMAL_CONVERSATION);
+
+    if (sessionRef.current?.connected) {
+      if (lang) {
+        sessionRef.current.sendClientContent(
+          `[Language switched by user] The user has selected ${lang.name} (${lang.nativeName}). Please respond entirely in ${lang.name} from now on.`
+        );
+      } else {
+        sessionRef.current.sendClientContent(
+          `[Language mode: Auto-detect] Please auto-detect the language from whatever I say and respond in that exact same language.`
+        );
+      }
+    }
+  }, [updateOnboardingState]);
+
+  // ─── Disconnect ────────────────────────────────────────────
+  const disconnect = useCallback(() => {
+    clearProcessingWatchdog();
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    turnNumberRef.current = 1;
+    earlyAudioBufferRef.current = [];
+    userInputLockedRef.current = false;
+    geminiGenerationCompleteRef.current = false;
+    audioPlaybackCompleteRef.current = false;
+    conversationCompletionHandledRef.current = false;
+    updateMetric('userInputLocked', false);
+    mic.stop();
+    sessionRef.current?.disconnect();
+    sessionRef.current = null;
+    clearCachedToken();
+    playback.stopAll();
+    updateState(VoiceState.IDLE);
+    setError(null);
+
+    const currentP = loadProfile();
+    const isComplete = Boolean(
+      (currentP.onboardingComplete || currentP.onboardingDone) &&
+      (currentP.selectedLanguage || currentP.language)
+    );
+    updateOnboardingState(isComplete ? OnboardingState.NORMAL_CONVERSATION : OnboardingState.FIRST_START);
+  }, [mic, playback, updateState, updateMetric, clearProcessingWatchdog, updateOnboardingState]);
+
+  // ─── Cleanup on unmount ────────────────────────────────────
+  useEffect(() => {
+    return () => {
+      clearProcessingWatchdog();
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      sessionRef.current?.disconnect();
+      mic.stop();
+      playback.dispose();
     };
-    window.addEventListener('sahkar-stop-all-audio', handleGlobalStop);
-    return () => window.removeEventListener('sahkar-stop-all-audio', handleGlobalStop);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return {
-    connectionState,
-    isLiveConnected: connectionState === 'listening' || connectionState === 'speaking',
-    isMicMuted,
-    userVolume,
-    aiVolume,
-    errorMessage,
-    transcriptHistory,
-    currentAssistantText,
-    currentUserText,
-    detectedLanguage,
-    startSession,
-    endSession,
-    toggleMicMute,
-    interruptAI,
-    reconnect,
-    sendUserPrompt,
-    setPushToTalkActive,
+    voiceState,
+    onboardingState,
+    profile,
+    turns,
+    error,
+    metrics,
+    connect,
+    disconnect,
+    setLanguage,
   };
 }
