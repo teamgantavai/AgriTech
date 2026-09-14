@@ -9,9 +9,10 @@ import { useGeminiLive } from '../hooks/useGeminiLive';
 import { VoicePanel } from './VoicePanel/VoicePanel';
 import { DebugPanel } from './DebugPanel/DebugPanel';
 import { AnimatedGlobe } from './AudioVisualizer/AnimatedGlobe';
-import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../services/sessionManager';
-import { VOICE_TOOL_EVENT, type VoiceToolEvent } from '../services/toolManager';
+import { SUPPORTED_LANGUAGES, type SupportedLanguage, setFarmerContext } from '../services/sessionManager';
+import { VOICE_TOOL_EVENT, type VoiceToolEvent, updateActiveFarmerContext } from '../services/toolManager';
 import { prefetchToken } from '../services/tokenService';
+import { CropCalendar } from './crop-calendar/CropCalendar';
 
 const CATEGORY_TAGS = [
   { id: 'pmkisan', label: '🌾 PM-Kisan Samman', query: 'PM-Kisan installment and eKYC' },
@@ -80,6 +81,7 @@ const LOCALIZED_SUGGESTIONS: Record<string, string[]> = {
 };
 
 export function VoiceAssistantApp() {
+  const [activeTab, setActiveTab] = useState<'calendar' | 'schemes'>('calendar');
   const [panelOpen, setPanelOpen] = useState(false);
   const [analyserData, setAnalyserData] = useState<Uint8Array | null>(null);
   const [micRms, setMicRms] = useState(0);
@@ -118,6 +120,16 @@ export function VoiceAssistantApp() {
           break;
         case 'openPage':
           msg = `Opening page: ${args.page}`;
+          if (args.page === 'calendar') setActiveTab('calendar');
+          else if (args.page === 'schemes' || args.page === 'home') setActiveTab('schemes');
+          break;
+        case 'cropCalendar':
+          msg = `Checking crop calendar for ${args.state || ''}`;
+          setActiveTab('calendar');
+          break;
+        case 'setCropCalendarState':
+          msg = `Updated state to ${args.state || ''}`;
+          setActiveTab('calendar');
           break;
         default:
           msg = `Action: ${tool}`;
@@ -135,10 +147,36 @@ export function VoiceAssistantApp() {
     prefetchToken();
   }, []);
 
+  // Determine current active language code
+  const currentLangCode = profile.languageCode || 'hi';
+  const currentPrompts = LOCALIZED_SUGGESTIONS[currentLangCode] || LOCALIZED_SUGGESTIONS['en'];
+
   const handleStart = useCallback(() => {
     setPanelOpen(true);
     connect();
   }, [connect]);
+
+  const handleOpenVoiceWithCrop = useCallback(
+    (cropName?: string, stateName?: string, monthNum?: number) => {
+      const ctxUpdates: any = {
+        currentCrop: cropName || null,
+      };
+      if (stateName) ctxUpdates.selectedState = stateName;
+      if (monthNum) ctxUpdates.selectedMonth = monthNum;
+
+      updateActiveFarmerContext(ctxUpdates);
+      setFarmerContext(ctxUpdates);
+
+      // If user hasn't explicitly selected a language yet, inherit active calendar language (e.g. Hindi)
+      if (!profile.selectedLanguage && !profile.language) {
+        const langObj = SUPPORTED_LANGUAGES.find((l) => l.code === currentLangCode) || SUPPORTED_LANGUAGES[0];
+        setLanguage(langObj);
+      }
+
+      handleStart();
+    },
+    [handleStart, profile.selectedLanguage, profile.language, currentLangCode, setLanguage]
+  );
 
   const handleStop = useCallback(() => {
     disconnect();
@@ -151,12 +189,57 @@ export function VoiceAssistantApp() {
     await connect();
   }, [connect]);
 
-  // Determine current active language object
-  const currentLangCode = profile.languageCode || 'hi';
-  const currentPrompts = LOCALIZED_SUGGESTIONS[currentLangCode] || LOCALIZED_SUGGESTIONS['en'];
-
   return (
     <div className="min-h-screen bg-white text-neutral-900 flex flex-col items-center justify-between relative selection:bg-emerald-100">
+      {/* ── Top Header Navigation Bar ── */}
+      {!panelOpen && (
+        <header className="w-full border-b border-neutral-200 bg-white/95 backdrop-blur sticky top-0 z-30 px-4 sm:px-8 py-3 flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-full bg-emerald-100 flex items-center justify-center text-lg">
+              🌾
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm sm:text-base font-bold text-neutral-900 leading-tight">
+                Sahkar Sathi · सहकार साथी
+              </span>
+              <span className="text-[11px] text-emerald-600 font-semibold">
+                {currentLangCode === 'hi'
+                  ? 'भारत सरकार UPAg फसल कैलेंडर एवं कृषि AI'
+                  : 'Govt of India UPAg Crop Calendar & Agri-AI'}
+              </span>
+            </div>
+          </div>
+
+          {/* Feature Switcher Tabs */}
+          <nav className="flex items-center bg-neutral-100 p-1 rounded-xl border border-neutral-200">
+            <button
+              type="button"
+              onClick={() => setActiveTab('calendar')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'calendar'
+                  ? 'bg-white text-emerald-800 shadow-sm'
+                  : 'text-neutral-600 hover:text-neutral-900'
+              }`}
+            >
+              <span>🌾</span>
+              <span>{currentLangCode === 'hi' ? 'फसल कैलेंडर' : 'Crop Calendar'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('schemes')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'schemes'
+                  ? 'bg-white text-emerald-800 shadow-sm'
+                  : 'text-neutral-600 hover:text-neutral-900'
+              }`}
+            >
+              <span>🏛️</span>
+              <span>{currentLangCode === 'hi' ? 'सरकारी योजनाएं' : 'Schemes & Voice'}</span>
+            </button>
+          </nav>
+        </header>
+      )}
+
       {/* ── Active Voice Talking Screen ── */}
       {panelOpen ? (
         <main className="w-full flex-1 flex flex-col items-center justify-center animate-fade-up">
@@ -172,6 +255,15 @@ export function VoiceAssistantApp() {
             onStop={handleStop}
             onRetry={voiceState === VoiceState.ERROR ? handleRetry : undefined}
             onLanguageChange={setLanguage}
+          />
+        </main>
+      ) : activeTab === 'calendar' ? (
+        /* ── 🌾 Farmer Crop Calendar View ── */
+        <main className="w-full flex-1 py-4 sm:py-6">
+          <CropCalendar
+            onOpenVoiceAssistant={handleOpenVoiceWithCrop}
+            isHindi={currentLangCode === 'hi'}
+            languageCode={currentLangCode}
           />
         </main>
       ) : (

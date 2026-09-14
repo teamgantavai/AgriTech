@@ -7,7 +7,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { VoiceState, OnboardingState } from '../types/voice';
 import type { SessionProfile, ConversationTurn, VoiceMetrics } from '../types/voice';
 import { GeminiLiveSession } from '../services/geminiLive';
-import { loadProfile, updateProfile, detectLanguageFromText, type SupportedLanguage } from '../services/sessionManager';
+import { loadProfile, updateProfile, detectLanguageFromText, getGreetingText, getFarmerContext, type SupportedLanguage } from '../services/sessionManager';
 import { getLiveToken, clearCachedToken } from '../services/tokenService';
 import { profiler } from '../services/voiceProfiler';
 import { useMicrophone } from './useMicrophone';
@@ -84,6 +84,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
   const conversationCompletionHandledRef = useRef(false);
   const processingWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleReconnectRef = useRef<() => void>(() => {});
+  const hasGreetedRef = useRef(false);
 
   useEffect(() => {
     profiler.setMetricsCallback((updates) => {
@@ -495,7 +496,9 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
       sessionRef.current?.disconnect();
       sessionRef.current = null;
       playback.stopAll();
-      earlyAudioBufferRef.current = [];
+      if (reconnectCountRef.current === 0) {
+        hasGreetedRef.current = false;
+      }
 
       profiler.mark('LIVE_SESSION_START');
 
@@ -515,37 +518,42 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
               reconnectCountRef.current = 0;
               updateMetric('sessionConnected', true);
 
-              const currentP = loadProfile();
-              const hasLang = Boolean(currentP.selectedLanguage || currentP.language);
-              const isComplete = Boolean(currentP.onboardingComplete || currentP.onboardingDone);
+              if (!hasGreetedRef.current) {
+                hasGreetedRef.current = true;
+                const currentP = loadProfile();
+                const hasLang = Boolean(currentP.selectedLanguage || currentP.language);
+                const farmerCtx = getFarmerContext();
 
-              if (isComplete && hasLang) {
-                // ── RETURNING USER: Greet directly in chosen language ──
-                const langName = currentP.selectedLanguage || currentP.language;
-                console.log(`[useGeminiLive] Returning user session connected (${langName})`);
-                updateOnboardingState(OnboardingState.NORMAL_CONVERSATION);
+                if (hasLang) {
+                  const langCodeOrName = currentP.languageCode || currentP.selectedLanguage || currentP.language || 'hi';
+                  const greetingText = getGreetingText(langCodeOrName, farmerCtx.currentCrop);
+                  console.log(`[useGeminiLive] Auto-greeting triggered (${langCodeOrName}, crop=${farmerCtx.currentCrop || 'none'}): "${greetingText}"`);
+                  updateOnboardingState(OnboardingState.NORMAL_CONVERSATION);
 
-                // Lock microphone while AI produces and speaks the greeting
-                userInputLockedRef.current = true;
-                updateMetric('userInputLocked', true);
-                updateState(VoiceState.PROCESSING);
+                  // Lock microphone while AI produces and speaks the greeting
+                  userInputLockedRef.current = true;
+                  updateMetric('userInputLocked', true);
+                  updateState(VoiceState.PROCESSING);
 
-                sessionRef.current?.sendClientContent(
-                  `[Returning user connected] Greet the returning user in ${langName} with a short natural question equivalent to: 'How can I help you?' (e.g. in Hindi: 'ठीक है! मैं आपकी कैसे मदद कर सकता हूँ?', Punjabi: 'ਠੀਕ ਹੈ! ਮੈਂ ਤੁਹਾਡੀ ਕਿਵੇਂ ਮਦਦ ਕਰ ਸਕਦਾ ਹਾਂ?', English: 'Sure! How can I help you?'). Do NOT ask for their language.`
-                );
+                  sessionRef.current?.sendClientContent(
+                    `[Greeting request] Speak ONLY this exact short greeting now and nothing else: "${greetingText}"`
+                  );
+                } else {
+                  // No language selected: ask language question
+                  console.log('[useGeminiLive] No language selected. Asking language question.');
+                  updateOnboardingState(OnboardingState.LANGUAGE_QUESTION);
+
+                  // Lock microphone while AI asks language question
+                  userInputLockedRef.current = true;
+                  updateMetric('userInputLocked', true);
+                  updateState(VoiceState.PROCESSING);
+
+                  sessionRef.current?.sendClientContent(
+                    `[First interaction] Start now by asking ONLY the short bilingual question: 'नमस्ते! आप कौन सी भाषा में बात करना चाहते हैं? Which language would you like to speak in?' Do not say anything else.`
+                  );
+                }
               } else {
-                // ── FIRST-TIME USER: Immediately ask for language ──
-                console.log('[useGeminiLive] First-time user connected. Asking language question.');
-                updateOnboardingState(OnboardingState.LANGUAGE_QUESTION);
-
-                // Lock microphone while AI asks language question
-                userInputLockedRef.current = true;
-                updateMetric('userInputLocked', true);
-                updateState(VoiceState.PROCESSING);
-
-                sessionRef.current?.sendClientContent(
-                  `[First interaction] Start now by asking ONLY the short English question: 'Which language would you like to speak in?' Do not say anything else.`
-                );
+                console.log('[useGeminiLive] Session reconnected or greeting already played — skipping duplicate greeting.');
               }
             },
             onSetupSent: () => {
@@ -806,6 +814,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
     turnNumberRef.current = 1;
     earlyAudioBufferRef.current = [];
     userInputLockedRef.current = false;
+    hasGreetedRef.current = false;
     geminiGenerationCompleteRef.current = false;
     audioPlaybackCompleteRef.current = false;
     conversationCompletionHandledRef.current = false;

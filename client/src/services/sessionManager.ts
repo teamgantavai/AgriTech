@@ -69,6 +69,34 @@ export function clearProfile(): void {
   }
 }
 
+export interface FarmerContext {
+  state: string;
+  month: number;
+  currentCrop: string | null;
+}
+
+export function setFarmerContext(ctx: Partial<FarmerContext>): void {
+  if (typeof window !== 'undefined') {
+    const existing = (window as any).__sahkar_farmer_ctx || {
+      state: 'Rajasthan',
+      month: new Date().getMonth() + 1,
+      currentCrop: null,
+    };
+    (window as any).__sahkar_farmer_ctx = { ...existing, ...ctx };
+  }
+}
+
+export function getFarmerContext(): FarmerContext {
+  if (typeof window !== 'undefined' && (window as any).__sahkar_farmer_ctx) {
+    return (window as any).__sahkar_farmer_ctx;
+  }
+  return {
+    state: 'Rajasthan',
+    month: new Date().getMonth() + 1,
+    currentCrop: null,
+  };
+}
+
 export interface SupportedLanguage {
   code: string;
   name: string;
@@ -176,6 +204,90 @@ export function detectLanguageFromText(text: string): SupportedLanguage | null {
   return null;
 }
 
+export interface GreetingPhrases {
+  standard: string;
+  crop: (cropName: string) => string;
+}
+
+export const GREETINGS_BY_LANGUAGE: Record<string, GreetingPhrases> = {
+  hi: {
+    standard: 'नमस्ते! मैं सहकार साथी हूँ। बताइए, मैं आपकी कैसे मदद करूँ?',
+    crop: (crop) => `नमस्ते! मैं सहकार साथी हूँ। ${crop} के बारे में पूछना है या किसी और चीज़ में मदद चाहिए?`,
+  },
+  en: {
+    standard: "Hello! I'm Sahkar Sathi. How can I help you today?",
+    crop: (crop) => `Hello! I'm Sahkar Sathi. Would you like to ask about ${crop}, or do you need help with something else?`,
+  },
+  pa: {
+    standard: 'ਸਤ ਸ੍ਰੀ ਅਕਾਲ! ਮੈਂ ਸਹਕਾਰ ਸਾਥੀ ਹਾਂ। ਦੱਸੋ, ਮੈਂ ਤੁਹਾਡੀ ਕਿਵੇਂ ਮਦਦ ਕਰ ਸਕਦਾ ਹਾਂ?',
+    crop: (crop) => `ਸਤ ਸ੍ਰੀ ਅਕਾਲ! ਮੈਂ ਸਹਕਾਰ ਸਾਥੀ ਹਾਂ। ਕੀ ਤੁਸੀਂ ${crop} ਬਾਰੇ ਪੁੱਛਣਾ ਚਾਹੁੰਦੇ ਹੋ ਜਾਂ ਕਿਸੇ ਹੋਰ ਚੀਜ਼ ਵਿੱਚ ਮਦਦ ਚਾਹੀਦੀ ਹੈ?`,
+  },
+  mr: {
+    standard: 'नमस्कार! मी सहकार साथी आहे. सांगा, मी तुमची कशी मदत करू शकतो?',
+    crop: (crop) => `नमस्कार! मी सहकार साथी आहे. तुम्हाला ${crop} बद्दल विचारायचे आहे की इतर काही मदत हवी आहे?`,
+  },
+  gu: {
+    standard: 'નમસ્તે! હું સહકાર સાથી છું. કહો, હું તમારી શું મદદ કરી શકું?',
+    crop: (crop) => `નમસ્તે! હું સહકાર સાથી છું. તમારે ${crop} વિશે પૂછવું છે કે અન્ય કોઈ બાબતમાં મદદ જોઈએ છે?`,
+  },
+  bn: {
+    standard: 'নমস্কার! আমি সহকার সাথী। বলুন, আমি আপনাকে কীভাবে সাহায্য করতে পারি?',
+    crop: (crop) => `নমস্কার! আমি সহকার সাথী। আপনি কি ${crop} সম্পর্কে জানতে চান নাকি অন্য কিছুতে সাহায্য লাগবে?`,
+  },
+  te: {
+    standard: 'నమస్కారం! నేను సహకార్ సాథీని. చెప్పండి, నేను మీకు ఎలా సహాయపడగలను?',
+    crop: (crop) => `నమస్కారం! నేను సహకార్ సాథీని. మీరు ${crop} గురించి అడగాలనుకుంటున్నారా లేదా మరేదైనా సహాయం కావాలా?`,
+  },
+  ta: {
+    standard: 'வணக்கம்! நான் சகார் சாதி. சொல்லுங்கள், நான் உங்களுக்கு எவ்வாறு உதவ முடியும்?',
+    crop: (crop) => `வணக்கம்! நான் சகார் சாதி. நீங்கள் ${crop} பற்றி கேட்க விரும்புகிறீர்களா அல்லது வேறு ஏதேனும் உதவி தேவையா?`,
+  },
+  kn: {
+    standard: 'ನಮಸ್ಕಾರ! ನಾನು ಸಹಕಾರ ಸಾಥಿ. ಹೇಳಿ, ನಾನು ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಲಿ?',
+    crop: (crop) => `ನಮಸ್ಕಾರ! ನಾನು ಸಹಕಾರ ಸಾಥಿ. ನೀವು ${crop} ಬಗ್ಗೆ ಕೇಳಲು ಬಯಸುವಿರಾ ಅಥವಾ ಬೇರೆ ಯಾವುದಾದರೂ ಸಹಾಯ ಬೇಕೇ?`,
+  },
+  ml: {
+    standard: 'നമസ്കാരം! ഞാൻ സഹകാർ സാഥിയാണ്. പറയൂ, ഞാൻ നിങ്ങളെ എങ്ങനെ സഹായിക്കണം?',
+    crop: (crop) => `നമസ്കാരം! ഞാൻ സഹകാർ സാഥിയാണ്. നിങ്ങൾക്ക് ${crop} നെക്കുറിച്ച് അറിയണമെന്നുണ്ടോ അതോ മറ്റെന്തെങ്കിലും സഹായം വേണമോ?`,
+  },
+  or: {
+    standard: 'ନମସ୍କାର! ମୁଁ ସହକାର ସାଥୀ। କୁହନ୍ତୁ, ମୁଁ ଆପଣଙ୍କୁ କିପରି ସାହାଯ୍ୟ କରିପାରିବି?',
+    crop: (crop) => `ନମସ୍କାର! ମୁଁ ସହକାର ସାଥୀ। ଆପଣ ${crop} ବିଷୟରେ ପଚାରିବାକୁ ଚାହାଁନ୍ତି କି ଆଉ କିଛି ସାହାଯ୍ୟ ଦରକਾਰ?`,
+  },
+  as: {
+    standard: 'নমস্কাৰ! মই সহকাৰ সাথী। কওক, মই আপোনাক কেনেকৈ সহায় কৰিব পাৰোঁ?',
+    crop: (crop) => `নমস্কাৰ! মই সহকাৰ সাথী। আপুনি ${crop} বিষয়ে জানিব বিচাৰে নেকি আন কিবাত সহায় লাগিব?`,
+  },
+  ur: {
+    standard: 'سلام! میں سہکار ساتھی ہوں۔ بتائیے، میں آپ کی کیا مدد کر سکتا ہوں؟',
+    crop: (crop) => `سلام! میں سہکار ساتھی ہوں۔ ${crop} کے بارے میں پوچھنا ہے یا کسی اور چیز میں مدد چاہیے؟`,
+  },
+  'hi-Latn': {
+    standard: 'Namaste! Main Sahkar Sathi hoon. Batayein, main aapki kaise madad kar sakta hoon?',
+    crop: (crop) => `Namaste! Main Sahkar Sathi hoon. Kya aapko ${crop} ke baare mein poochna hai ya kisi aur cheez mein madad chahiye?`,
+  },
+};
+
+/**
+ * Returns natural, short, localized greeting text for any of the 14 supported languages,
+ * including crop calendar context when available.
+ */
+export function getGreetingText(langCodeOrName?: string | null, cropName?: string | null): string {
+  if (!langCodeOrName) return GREETINGS_BY_LANGUAGE['hi'].standard;
+
+  const clean = langCodeOrName.toLowerCase().trim();
+  const langObj = SUPPORTED_LANGUAGES.find(
+    (l) => l.code.toLowerCase() === clean || l.name.toLowerCase() === clean
+  );
+  const code = langObj ? langObj.code : (GREETINGS_BY_LANGUAGE[clean] ? clean : 'hi');
+  const greeting = GREETINGS_BY_LANGUAGE[code] || GREETINGS_BY_LANGUAGE['hi'];
+
+  if (cropName && cropName.trim()) {
+    return greeting.crop(cropName.trim());
+  }
+  return greeting.standard;
+}
+
 export function buildSystemInstruction(profile: SessionProfile): string {
   const currentLang = profile.selectedLanguage || profile.language;
   const isReturningUser = Boolean(
@@ -188,49 +300,35 @@ export function buildSystemInstruction(profile: SessionProfile): string {
       l.code.toLowerCase() === profile.languageCode?.toLowerCase()
   );
 
-  // Flow instructions based on whether the user is returning or starting fresh
+  // Flow instructions based on whether language has been selected or not
   let flowInstruction = '';
 
-  if (isReturningUser && selectedLangObj) {
-    flowInstruction = `RETURNING USER MODE:
-The user has already completed language onboarding and previously selected ${selectedLangObj.name} (${selectedLangObj.nativeName}).
+  if (selectedLangObj) {
+    flowInstruction = `GREETING & CONVERSATION MODE:
+The user's selected language is ${selectedLangObj.name} (${selectedLangObj.nativeName}).
+When the session begins, provide ONLY the short requested greeting in ${selectedLangObj.name}.
 Do NOT ask which language they would like to use.
-Respond immediately in ${selectedLangObj.name} with a short greeting equivalent to:
-"How can I help you?"
-Examples:
-- Hindi: "ठीक है! मैं आपकी कैसे मदद कर सकता हूँ?"
-- Punjabi: "ਠੀਕ ਹੈ! ਮੈਂ ਤੁਹਾਡੀ ਕਿਵੇਂ ਮਦਦ ਕਰ ਸਕਦਾ ਹਾਂ?"
-- English: "Sure! How can I help you?"
+After the greeting is spoken, wait for the user to speak.
 Then continue the normal conversation directly in ${selectedLangObj.name}.
+Keep responses concise, natural, warm and brief (2-5 seconds for greetings).
+Do not repeat introductory greetings or monologues once conversation is underway.
 If the user intentionally asks to change language (e.g. "Let's speak English"), seamlessly switch to that language.`;
   } else {
     flowInstruction = `MANDATORY FIRST-TIME ONBOARDING FLOW:
-At the beginning of a new voice conversation, first ask the user which language they would like to use:
-"Which language would you like to speak in?"
+At the beginning of a new voice conversation where no language has yet been selected, ask the short language question:
+"नमस्ते! आप कौन सी भाषा में बात करना चाहते हैं? Which language would you like to speak in?"
 
 Wait for the user's answer.
 
-Once the language is determined, respond in that language.
-
-Then ask a short natural question equivalent to:
-'How can I help you?'
-Examples:
-- Hindi: "ठीक है! मैं आपकी कैसे मदद कर सकता हूँ?"
-- Punjabi: "ਠੀਕ ਹੈ! ਮੈਂ ਤੁਹਾਡੀ ਕਿਵੇਂ ਮਦਦ ਕਰ ਸਕਦਾ ਹਾਂ?"
-- English: "Sure! How can I help you?"
+Once the language is determined, respond in that language with the short greeting:
+"नमस्ते! मैं सहकार साथी हूँ। बताइए, मैं आपकी कैसे मदद करूँ?" (or native equivalent).
 
 Do not ask for occupation, name, age, or other profile information during the initial language onboarding unless the user provides it voluntarily.
-
-If the user's language answer is ambiguous (such as "anything" or "I don't know"), ask politely:
-"Which language would you prefer: Hindi, English, Punjabi, or another language?"
-Do not repeatedly ask if the language is already obvious.
 
 If the user starts asking a question instead (e.g. "Tell me about PM Kisan"):
 Infer the user's language from their speech, adopt that language, and answer their question directly in that language without forcing them to repeat the language question.
 
-After language onboarding is complete, have a normal natural conversation.
-
-Always follow the user's current spoken language if they intentionally switch languages.`;
+After language onboarding is complete, have a normal natural conversation.`;
   }
 
   const languagePrompt = selectedLangObj
@@ -245,11 +343,30 @@ Always follow the user's current spoken language if they intentionally switch la
     ? `The user's name is ${profile.nameIfProvided}. Address them respectfully when appropriate.`
     : '';
 
+  const farmerCtx = typeof window !== 'undefined' ? (window as any).__sahkar_farmer_ctx || { state: 'Rajasthan', month: new Date().getMonth() + 1, currentCrop: null } : { state: 'Rajasthan', month: new Date().getMonth() + 1, currentCrop: null };
+
+  const cropCalendarContext = `
+FARMER CROP CALENDAR CONTEXT:
+- Active State: ${farmerCtx.state || 'Rajasthan'}
+- Current Month: Month ${farmerCtx.month || (new Date().getMonth() + 1)} (${new Date().toLocaleString('en-US', { month: 'long' })})
+${farmerCtx.currentCrop ? `- Currently Selected/Viewed Crop: ${farmerCtx.currentCrop}` : ''}
+
+CROP CALENDAR TOOL RULES:
+1. When the farmer asks what to sow, grow, or harvest, or asks about crop timings:
+   - Call the 'getCropCalendar' tool with state, month, crop, and phase.
+   - If user asks about "this crop" or "इसके बारे में", pass the viewed crop (${farmerCtx.currentCrop || 'the crop in context'}).
+2. Keep spoken responses CONCISE (1 to 3 natural sentences). Name only the top 2-3 crops. Do not read huge lists.
+3. Distinguish reference crop calendar from real-time farming decisions: note that actual sowing depends on local rain and soil conditions.
+4. If data is not available, state honestly: "मेरे पास इस राज्य और महीने के लिए crop calendar की जानकारी उपलब्ध नहीं है।" Do not fabricate data.
+5. If the farmer asks to change state (e.g. "मेरा राज्य पंजाब कर दो", "राजस्थान का कैलेंडर दिखाओ"), invoke 'setCropCalendarState' to update the UI automatically.`;
+
   return `You are Sahkar Sathi (सहकार साथी), a highly professional, warm, and articulate AI voice assistant dedicated to Indian agriculture, government schemes, farmers, cooperatives (PACS), dairy, fisheries, and rural livelihoods.
 
 ${flowInstruction}
 
 ${languagePrompt}
+
+${cropCalendarContext}
 
 NO REGISTRATION OR UNNECESSARY FORMS:
 Do not ask for occupation, name, age, or registration details during initial interaction. The first interaction must feel like a natural voice assistant, not a form. If the user mentions their farming background or asks about a scheme, you may naturally personalize responses.

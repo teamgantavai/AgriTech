@@ -37,6 +37,52 @@ const STATE_LABEL: Record<VoiceState, string> = {
   [VoiceState.DISCONNECTED]: 'Disconnected',
 };
 
+function getLocalizedStateLabel(state: VoiceState, langCode?: string): string {
+  const code = langCode || 'hi';
+  switch (state) {
+    case VoiceState.AI_SPEAKING:
+      if (code === 'en') return 'Sahkar Sathi is speaking...';
+      if (code === 'pa') return 'ਸਹਕਾਰ ਸਾਥੀ ਬੋਲ ਰਿਹਾ ਹੈ...';
+      if (code === 'mr') return 'सहकार साथी बोलत आहे...';
+      if (code === 'gu') return 'સહકાર સાથી બોલી રહ્યા છે...';
+      if (code === 'bn') return 'সহকার সাথী কথা বলছে...';
+      if (code === 'te') return 'సహకార్ సాథీ మాట్లాడుతున్నారు...';
+      if (code === 'ta') return 'சகார் சாதி பேசுகிறார்...';
+      if (code === 'kn') return 'ಸಹಕಾರ ಸಾಥಿ ಮಾತನಾಡುತ್ತಿದ್ದಾರೆ...';
+      if (code === 'ml') return 'സഹകാർ സാഥി സംസാരിക്കുന്നു...';
+      return 'सहकार साथी बोल रहा है...';
+    case VoiceState.LISTENING:
+    case VoiceState.READY_FOR_USER:
+      if (code === 'en') return 'Listening...';
+      if (code === 'pa') return 'ਸੁਣ ਰਿਹਾ ਹਾਂ...';
+      if (code === 'mr') return 'ऐकत आहे...';
+      if (code === 'gu') return 'સાંભળી રહ્યો છું...';
+      if (code === 'bn') return 'শুনছি...';
+      if (code === 'te') return 'వింటున్నాను...';
+      if (code === 'ta') return 'கேட்கிறேன்...';
+      if (code === 'kn') return 'ಕೇಳಿಸಿಕೊಳ್ಳುತ್ತಿದ್ದೇನೆ...';
+      if (code === 'ml') return 'കേൾക്കുന്നു...';
+      return 'सुन रहा हूँ...';
+    case VoiceState.PROCESSING:
+      if (code === 'en') return 'Thinking...';
+      if (code === 'pa') return 'ਸੋਚ ਰਿਹਾ ਹਾਂ...';
+      if (code === 'mr') return 'विचार करत आहे...';
+      return 'सोच रहा हूँ...';
+    case VoiceState.PREPARING:
+      return 'Preparing voice...';
+    case VoiceState.CONNECTING:
+    case VoiceState.RECOVERING:
+      return 'Connecting...';
+    case VoiceState.ERROR:
+      return 'Voice connection problem';
+    case VoiceState.IDLE:
+    case VoiceState.READY:
+      return 'Ready';
+    default:
+      return STATE_LABEL[state] || 'Ready';
+  }
+}
+
 function cleanMarkdown(text: string): string {
   return text.replace(/\*\*(.*?)\*\*/g, '$1').replace(/\*(.*?)\*/g, '$1');
 }
@@ -94,19 +140,29 @@ export function VoicePanel({
       l.name.toLowerCase() === (profile.selectedLanguage || profile.language)?.toLowerCase() ||
       l.code.toLowerCase() === profile.languageCode?.toLowerCase()
   );
+  const langCode = activeLangObj?.code || profile.languageCode || 'hi';
 
   // Determine current active subtitle text
   const latestTurn = turns.length > 0 ? turns[turns.length - 1] : null;
-  let subtitleText = activeLangObj
-    ? `Listening in ${activeLangObj.nativeName}... Ask about any scheme`
-    : 'Listening... Speak in Hindi, Punjabi, Marathi, English or your native language';
+
+  let listeningSubtitle = 'सुन रहा हूँ... अपनी खेती या योजना के बारे में पूछें';
+  if (langCode === 'en') listeningSubtitle = 'Listening... Ask about any farming scheme';
+  else if (langCode === 'pa') listeningSubtitle = 'ਸੁਣ ਰਿਹਾ ਹਾਂ... ਖੇਤੀ ਜਾਂ ਸਕੀਮ ਬਾਰੇ ਪੁੱਛੋ';
+  else if (langCode === 'mr') listeningSubtitle = 'ऐकत आहे... शेती किंवा योजनांबद्दल विचारा';
+  else if (langCode === 'gu') listeningSubtitle = 'સાંભળી રહ્યો છું... ખેતી અથવા યોજના વિશે પૂછો';
+  else if (langCode === 'bn') listeningSubtitle = 'শুনছি... কৃষি বা সরকারি প্রকল্প সম্পর্কে জিজ্ঞাসা করুন';
+  else if (langCode === 'te') listeningSubtitle = 'వింటున్నాను... వ్యవసాయం లేదా పథకాల గురించి అడగండి';
+  else if (langCode === 'ta') listeningSubtitle = 'கேட்கிறேன்... விவசாயம் அல்லது திட்டங்கள் பற்றி கேளுங்கள்';
+  else if (langCode === 'kn') listeningSubtitle = 'ಕೇಳಿಸಿಕೊಳ್ಳುತ್ತಿದ್ದೇನೆ... ಕೃಷಿ ಅಥವಾ ಯೋಜನೆಗಳ ಬಗ್ಗೆ ಕೇಳಿ';
+
+  let subtitleText = listeningSubtitle;
 
   if (isSpeaking && latestTurn?.role === 'assistant' && latestTurn?.text) {
     subtitleText = cleanMarkdown(latestTurn.text);
   } else if (isSpeaking) {
-    subtitleText = 'AI is speaking...';
+    subtitleText = getLocalizedStateLabel(VoiceState.AI_SPEAKING, langCode);
   } else if (voiceState === VoiceState.PROCESSING) {
-    subtitleText = 'Thinking...';
+    subtitleText = getLocalizedStateLabel(VoiceState.PROCESSING, langCode);
   } else if (onboardingState === OnboardingState.LANGUAGE_QUESTION) {
     subtitleText = 'Which language would you like to speak in?';
   } else if (onboardingState === OnboardingState.WAITING_FOR_LANGUAGE) {
@@ -118,7 +174,7 @@ export function VoicePanel({
   } else if (isConnecting) {
     subtitleText = 'Connecting...';
   } else if (voiceState === VoiceState.READY_FOR_USER) {
-    subtitleText = 'Ready! Speak whenever you want';
+    subtitleText = getLocalizedStateLabel(VoiceState.LISTENING, langCode);
   } else if (isError) {
     subtitleText = error || 'Voice connection problem. Tap retry below.';
   } else if (latestTurn?.text) {
@@ -194,7 +250,7 @@ export function VoicePanel({
           ) : (
             <span className="inline-flex items-center gap-1.5">
               <span className={`w-2 h-2 rounded-full ${isSpeaking ? 'bg-indigo-500 animate-pulse' : isListening ? 'bg-emerald-500 animate-pulse' : 'bg-neutral-400'}`} />
-              <span>{STATE_LABEL[voiceState]}</span>
+              <span>{getLocalizedStateLabel(voiceState, langCode)}</span>
             </span>
           )}
         </p>
