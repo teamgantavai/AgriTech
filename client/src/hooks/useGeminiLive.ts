@@ -83,6 +83,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
   const audioPlaybackCompleteRef = useRef(false);
   const conversationCompletionHandledRef = useRef(false);
   const processingWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleReconnectRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     profiler.setMetricsCallback((updates) => {
@@ -113,18 +114,31 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
   const micRef = useRef<any>(null);
 
   // ─── Finish Speaking & Unlock Microphone ───────────────────
-  // Called ONLY when BOTH geminiGenerationComplete AND audioPlaybackComplete are true
+  // Called ONLY when ALL 5 conditions are satisfied:
+  // 1. geminiGenerationComplete === true
+  // 2. audioReceivingComplete === true
+  // 3. audioQueue.length === 0
+  // 4. activeSources === 0
+  // 5. audioPlaybackComplete === true
   const finishSpeaking = useCallback(() => {
     clearProcessingWatchdog();
+
+    console.log(`[TURN ${turnNumberRef.current}] audio playback complete`);
+    console.log(`[TURN ${turnNumberRef.current}] microphone unlocked`);
+
+    userInputLockedRef.current = false;
+    updateMetric('userInputLocked', false);
+
+    // Cleanly purge any energy/silence timers accumulated during speaking
+    micRef.current?.resetVAD();
 
     if (onboardingStateRef.current === OnboardingState.LANGUAGE_QUESTION) {
       // AI has finished asking "Which language would you like to speak in?"
       updateOnboardingState(OnboardingState.WAITING_FOR_LANGUAGE);
-      userInputLockedRef.current = false;
-      updateMetric('userInputLocked', false);
-      micRef.current?.resetVAD();
       updateState(VoiceState.READY_FOR_USER);
       console.log('[INPUT] microphone unlocked — waiting for user language choice');
+      turnNumberRef.current += 1;
+      sessionRef.current?.setTurnNumber(turnNumberRef.current);
       setTimeout(() => {
         if (voiceStateRef.current === VoiceState.READY_FOR_USER) {
           updateState(VoiceState.LISTENING);
@@ -147,11 +161,10 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
       setProfile(updated);
       console.log('[useGeminiLive] Language onboarding complete! Saved profile:', updated);
 
-      userInputLockedRef.current = false;
-      updateMetric('userInputLocked', false);
-      micRef.current?.resetVAD();
       updateState(VoiceState.READY_FOR_USER);
       console.log('[INPUT] microphone unlocked — ready for normal conversation');
+      turnNumberRef.current += 1;
+      sessionRef.current?.setTurnNumber(turnNumberRef.current);
       setTimeout(() => {
         if (voiceStateRef.current === VoiceState.READY_FOR_USER) {
           updateState(VoiceState.LISTENING);
@@ -165,12 +178,8 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
     updateState(VoiceState.READY_FOR_USER);
     console.log('[STATE] READY_FOR_USER');
 
-    userInputLockedRef.current = false;
-    updateMetric('userInputLocked', false);
-    console.log('[INPUT] microphone unlocked');
-
-    // Cleanly purge any energy/silence timers accumulated during speaking
-    micRef.current?.resetVAD();
+    turnNumberRef.current += 1;
+    sessionRef.current?.setTurnNumber(turnNumberRef.current);
 
     // Prompt, seamless transition to LISTENING
     setTimeout(() => {
@@ -181,18 +190,93 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
     }, 100);
   }, [updateState, updateMetric, clearProcessingWatchdog, updateOnboardingState]);
 
-  // ─── Single Completion Condition Check ─────────────────────
+  // ─── Single Authoritative Completion Condition Check ────────
+  // Strict half-duplex requirement:
+  // Unlock microphone ONLY after Gemini generation is complete AND complete physical audio has finished.
   const checkConversationCompletion = useCallback(() => {
-    const isActuallyPlaying = playbackRef.current?.isPlaying?.() ?? false;
-    if (
+    const isReceivingDone = playbackRef.current?.isReceivingComplete?.() ?? false;
+    const qLen = playbackRef.current?.getQueueLength?.() ?? 0;
+    const activeSources = playbackRef.current?.getActiveSourcesCount?.() ?? 0;
+    const isAudioComplete = audioPlaybackCompleteRef.current;
+
+    const canUnlock =
       geminiGenerationCompleteRef.current &&
-      (audioPlaybackCompleteRef.current || !isActuallyPlaying) &&
-      !conversationCompletionHandledRef.current
-    ) {
+      isReceivingDone &&
+      qLen === 0 &&
+      activeSources === 0 &&
+      isAudioComplete;
+
+    if (canUnlock && !conversationCompletionHandledRef.current) {
       conversationCompletionHandledRef.current = true;
       finishSpeaking();
     }
   }, [finishSpeaking]);
+
+  // ─── Stuck State Recovery ──────────────────────────────────
+  const recoverStuckState = useCallback(
+    (reason: string) => {
+      const pDiag = playbackRef.current?.getDiagnostics?.();
+      const now = Date.now();
+      const lastProgress = Math.max(
+        sessionRef.current?.lastMessageTime ?? 0,
+        pDiag?.lastAudioChunkTime ?? 0,
+        pDiag?.lastAudioPlaybackTime ?? 0,
+        turnStartTimeRef.current
+      );
+      const idleMs = now - lastProgress;
+
+      console.error(
+        `[VOICE ERROR]\n` +
+        `turn=${turnNumberRef.current}\n` +
+        `state=${voiceStateRef.current}\n` +
+        `geminiConnected=${sessionRef.current?.isHealthy() ?? false}\n` +
+        `audioContext=${pDiag?.audioContextState ?? 'unknown'}\n` +
+        `queue=${pDiag?.queueLength ?? 0}\n` +
+        `activeSources=${pDiag?.activeSources ?? 0}\n` +
+        `lastAudio=${idleMs}ms ago\n` +
+        `reason=${reason}`
+      );
+
+      clearProcessingWatchdog();
+      updateState(VoiceState.RECOVERING);
+
+      // 1. Stop stale playback & clean active sources
+      playbackRef.current?.stopAll();
+
+      // 2. Reset turn flags
+      geminiGenerationCompleteRef.current = false;
+      audioPlaybackCompleteRef.current = false;
+      conversationCompletionHandledRef.current = false;
+
+      // 3. Ensure AudioContext is running
+      playbackRef.current?.prewarmAudioContext();
+
+      // 4. Ensure microphone is healthy & reset VAD
+      micRef.current?.ensureHealthyTrack();
+      micRef.current?.resetVAD();
+
+      // 5. Check session health
+      if (sessionRef.current?.isHealthy()) {
+        console.log('[RECOVERY] Gemini session is healthy. Audio pipeline recovered without reconnection.');
+        userInputLockedRef.current = false;
+        updateMetric('userInputLocked', false);
+        updateState(VoiceState.READY_FOR_USER);
+        setTimeout(() => {
+          if (
+            voiceStateRef.current === VoiceState.READY_FOR_USER ||
+            voiceStateRef.current === VoiceState.RECOVERING
+          ) {
+            updateState(VoiceState.LISTENING);
+            console.log('[STATE] LISTENING (pipeline recovered)');
+          }
+        }, 200);
+      } else {
+        console.log('[RECOVERY] Gemini session is unhealthy. Reconnecting Live session...');
+        scheduleReconnectRef.current();
+      }
+    },
+    [updateState, updateMetric, clearProcessingWatchdog]
+  );
 
   // ─── Audio Playback ────────────────────────────────────────
   const playback = useAudioPlayback({
@@ -202,6 +286,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
       userInputLockedRef.current = true;
       updateMetric('userInputLocked', true);
       updateState(VoiceState.AI_SPEAKING);
+      console.log(`[TURN ${turnNumberRef.current}] audio playback started`);
       console.log('[STATE] AI_SPEAKING');
     },
     onPlaybackComplete: () => {
@@ -251,6 +336,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
       if (userInputLockedRef.current) {
         return;
       }
+      console.log(`[TURN ${turnNumberRef.current}] user speech start`);
       speechStartTimeRef.current = Date.now();
       // If user resumed speaking while in PROCESSING before Gemini responded, return to LISTENING
       if (voiceStateRef.current === VoiceState.PROCESSING) {
@@ -264,6 +350,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
         return;
       }
 
+      console.log(`[TURN ${turnNumberRef.current}] user speech end`);
       const duration = Date.now() - speechStartTimeRef.current;
       updateMetric('userSpeechDurationMs', duration);
 
@@ -277,6 +364,13 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
         geminiGenerationCompleteRef.current = false;
         audioPlaybackCompleteRef.current = false;
         conversationCompletionHandledRef.current = false;
+
+        // Reset playback queue and state cleanly for this turn
+        playback.resetForNewTurn(turnNumberRef.current, sessionRef.current?.currentGenerationId ?? 0);
+        sessionRef.current?.setTurnNumber(turnNumberRef.current);
+
+        // Verify microphone track health
+        mic.ensureHealthyTrack();
 
         updateState(VoiceState.PROCESSING);
         console.log('[STATE] PROCESSING');
@@ -458,6 +552,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
               profiler.mark('LIVE_SETUP_SENT');
             },
             onFirstResponseEvent: () => {
+              console.log(`[TURN ${turnNumberRef.current}] Gemini response started`);
               profiler.mark('FIRST_GEMINI_RESPONSE_EVENT');
             },
             onAudioChunk: (pcm, generationId) => {
@@ -472,7 +567,8 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
               }
               playback.enqueueChunk(
                 pcm,
-                generationId ?? sessionRef.current?.currentGenerationId ?? 0
+                generationId ?? sessionRef.current?.currentGenerationId ?? 0,
+                turnNumberRef.current
               );
               // Track TTFA
               if (voiceStateRef.current === VoiceState.PROCESSING) {
@@ -483,12 +579,23 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
             },
             onTurnComplete: (generationId) => {
               clearProcessingWatchdog();
-              console.log(`[GEMINI] generation complete for turn ${turnNumberRef.current}`);
+              const activeTurn = turnNumberRef.current;
+              console.log(`[TURN ${activeTurn}] turnComplete`);
               geminiGenerationCompleteRef.current = true;
 
               playback.markTurnComplete(
-                generationId ?? sessionRef.current?.currentGenerationId ?? 0
+                generationId ?? sessionRef.current?.currentGenerationId ?? 0,
+                activeTurn
               );
+
+              // Safety timeout: If 0 audio chunks were received from Gemini, ensure UI recovers
+              setTimeout(() => {
+                const diag = playback.getDiagnostics();
+                if (diag.chunksReceived === 0 && voiceStateRef.current === VoiceState.PROCESSING) {
+                  console.warn(`[TURN ${activeTurn}] [TIMEOUT] 0 audio chunks received for turn complete. Recovering UI...`);
+                  checkConversationCompletion();
+                }
+              }, 2000);
 
               // In case audio already finished (or 0 chunks received)
               checkConversationCompletion();
@@ -507,8 +614,6 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                 });
                 partialAssistantTextRef.current = '';
               }
-
-              turnNumberRef.current += 1;
             },
             onInterrupted: () => {
               // Barge-in disabled for strict turn-taking
@@ -664,6 +769,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
       connect();
     }, delay);
   }, [connect, handleError, updateState]);
+  scheduleReconnectRef.current = scheduleReconnect;
 
   // ─── Set Language (Manual Selection / Switching) ─────────────
   const setLanguage = useCallback((lang: SupportedLanguage | null) => {
@@ -719,6 +825,87 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
     );
     updateOnboardingState(isComplete ? OnboardingState.NORMAL_CONVERSATION : OnboardingState.FIRST_START);
   }, [mic, playback, updateState, updateMetric, clearProcessingWatchdog, updateOnboardingState]);
+
+  // ─── Diagnostics Heartbeat for Live Observability ──────────
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const pDiag = playbackRef.current?.getDiagnostics?.();
+      const mDiag = micRef.current?.getDiagnostics?.();
+      const live = sessionRef.current;
+
+      setMetrics((prev) => ({
+        ...prev,
+        sessionId: live?.sessionId ?? null,
+        sessionState: live?.connectionState ?? (live?.connected ? 'OPEN' : 'CLOSED'),
+        lastMessageTime: live?.lastMessageTime ?? null,
+        audioContextState: pDiag?.audioContextState ?? null,
+        queueLength: pDiag?.queueLength ?? 0,
+        activeSources: pDiag?.activeSources ?? 0,
+        schedulerState: pDiag?.schedulerState ?? 'idle',
+        currentTurnId: turnNumberRef.current,
+        chunksReceived: pDiag?.chunksReceived ?? 0,
+        chunksPlayed: pDiag?.chunksPlayed ?? 0,
+        chunksRemaining: pDiag?.chunksRemaining ?? 0,
+        geminiGenerationStatus: geminiGenerationCompleteRef.current
+          ? 'complete'
+          : voiceStateRef.current === VoiceState.PROCESSING
+          ? 'generating'
+          : 'idle',
+        audioPlaybackStatus: playbackRef.current?.isPlaying?.()
+          ? 'playing'
+          : audioPlaybackCompleteRef.current
+          ? 'complete'
+          : 'idle',
+        geminiMessageListeners: live?.connected ? 1 : 0,
+        micListeners: 1,
+        liveSessionCount: live?.connected ? 1 : 0,
+        audioContextCount: 1,
+        micStreamCount: mDiag?.streamActive ? 1 : 0,
+        micTrackState: mDiag?.trackReadyState ?? 'none',
+        micStreamActive: mDiag?.streamActive ?? false,
+        sessionConnected: live?.connected ?? false,
+        lastGeminiEventTime: live?.lastMessageTime ?? null,
+        lastAudioChunkTime: pDiag?.lastAudioChunkTime ?? null,
+        lastAudioPlaybackTime: pDiag?.lastAudioPlaybackTime ?? null,
+        audioReceivingComplete: pDiag?.audioReceivingComplete ?? false,
+      }));
+    }, 500);
+
+    return () => clearInterval(timer);
+  }, []);
+
+  // ─── Progress-Based Playback & Session Watchdog ─────────────
+  // Does NOT cut off normal long responses (>15s) as long as audio is streaming or playing.
+  // Only intervenes if zero progress occurs for >12s while in AI_SPEAKING or PROCESSING.
+  useEffect(() => {
+    const watchdogInterval = setInterval(() => {
+      const currentState = voiceStateRef.current;
+      if (currentState === VoiceState.AI_SPEAKING || currentState === VoiceState.PROCESSING) {
+        const now = Date.now();
+        const pDiag = playbackRef.current?.getDiagnostics?.();
+        const lastMsg = sessionRef.current?.lastMessageTime ?? 0;
+        const lastChunk = pDiag?.lastAudioChunkTime ?? 0;
+        const lastPlayback = pDiag?.lastAudioPlaybackTime ?? 0;
+        const lastProgress = Math.max(lastMsg, lastChunk, lastPlayback, turnStartTimeRef.current);
+        const idleMs = now - lastProgress;
+
+        if (idleMs > 12000) {
+          const qLen = pDiag?.queueLength ?? 0;
+          const activeSources = pDiag?.activeSources ?? 0;
+
+          // Self-heal: if generation is complete and queue is fully drained, finish speaking!
+          if (geminiGenerationCompleteRef.current && qLen === 0 && activeSources === 0) {
+            console.warn('[WATCHDOG] Generation complete and queue drained. Auto-completing turn speaking...');
+            finishSpeaking();
+          } else {
+            recoverStuckState(`Idle timeout in ${currentState} (${idleMs}ms without progress)`);
+          }
+        }
+      }
+    }, 1000);
+
+    return () => clearInterval(watchdogInterval);
+  }, [finishSpeaking, recoverStuckState]);
 
   // ─── Cleanup on unmount ────────────────────────────────────
   useEffect(() => {

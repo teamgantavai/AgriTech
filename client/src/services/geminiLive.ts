@@ -28,6 +28,11 @@ export class GeminiLiveSession {
   private events: LiveSessionEvents;
   private onMetric: ((key: string, value: number | boolean | string) => void) | undefined;
 
+  // Session diagnostics
+  private readonly _sessionId: string;
+  private lastMessageTimestamp: number = 0;
+  private currentTurnNumber = 1;
+
   // Debug counters
   private chunkRxCount = 0;
   private generationId = 0;
@@ -36,6 +41,7 @@ export class GeminiLiveSession {
   private pendingAudioQueue: string[] = [];
 
   constructor(options: GeminiLiveSessionOptions) {
+    this._sessionId = `gemini-live-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7)}`;
     this.events = options.events;
     this.onMetric = options.onMetric;
   }
@@ -78,15 +84,18 @@ export class GeminiLiveSession {
           onopen: () => {
             if (this.isDisposed) return;
             this.isConnected = true;
+            this.lastMessageTimestamp = Date.now();
             const connectionMs = Date.now() - this.connectStartTime;
             this.onMetric?.('connectionTimeMs', connectionMs);
             this.onMetric?.('sessionConnected', true);
-            console.log(`[GeminiLive] WebSocket socket open in ${connectionMs}ms`);
+            console.log(`[GeminiLive] WebSocket socket open in ${connectionMs}ms (session=${this._sessionId})`);
+            console.log(`[Gemini] session=${this._sessionId} state=OPEN turn=${this.currentTurnNumber}`);
             this.events.onSetupSent?.();
           },
 
           onmessage: (message: any) => {
             if (this.isDisposed) return;
+            this.lastMessageTimestamp = Date.now();
             if (!this.firstResponseEventFired) {
               this.firstResponseEventFired = true;
               this.events.onFirstResponseEvent?.();
@@ -96,7 +105,7 @@ export class GeminiLiveSession {
 
           onerror: (error: ErrorEvent) => {
             if (this.isDisposed) return;
-            console.error('[GeminiLive] WebSocket error:', error);
+            console.error(`[GeminiLive] WebSocket error (session=${this._sessionId}):`, error);
             this.isConnected = false;
             this.onMetric?.('sessionConnected', false);
             this.events.onError(new Error(error.message || 'WebSocket error'));
@@ -104,7 +113,8 @@ export class GeminiLiveSession {
 
           onclose: (event: CloseEvent) => {
             if (this.isDisposed) return;
-            console.log(`[GeminiLive] Connection closed: ${event.code} ${event.reason}`);
+            console.log(`[GeminiLive] Connection closed: code=${event.code} reason=${event.reason} (session=${this._sessionId})`);
+            console.log(`[Gemini] session=${this._sessionId} state=CLOSED turn=${this.currentTurnNumber}`);
             this.isConnected = false;
             this.onMetric?.('sessionConnected', false);
             this.events.onDisconnect();
@@ -123,7 +133,7 @@ export class GeminiLiveSession {
 
       this.session = session;
       this.isConnected = true;
-      console.log('[GeminiLive] Live session connected & setupComplete acknowledged');
+      console.log(`[GeminiLive] Live session connected & setupComplete acknowledged (session=${this._sessionId})`);
 
       // Flush any queued client content turns
       while (this.pendingClientContent.length > 0) {
@@ -144,54 +154,52 @@ export class GeminiLiveSession {
       // Session is now 100% ready for turns and audio
       this.events.onConnect();
     } catch (err: any) {
-      console.error('[GeminiLive] Connect failed:', err);
+      console.error(`[GeminiLive] Connect failed (session=${this._sessionId}):`, err);
       throw err;
     }
   }
 
   private handleMessage(message: any) {
     // ── Audio data ─────────────────────────────────────────
-    // Extract base64 audio: first check modelTurn.parts inlineData, fallback to message.data
-    let base64Audio: string | undefined;
+    // Extract base64 audio chunks: check modelTurn.parts inlineData, fallback to message.data
+    const audioDataChunks: string[] = [];
     if (message?.serverContent?.modelTurn?.parts) {
       for (const part of message.serverContent.modelTurn.parts) {
         if (part?.inlineData?.data) {
-          base64Audio = part.inlineData.data;
-          break;
+          audioDataChunks.push(part.inlineData.data);
         }
       }
     }
-    if (!base64Audio && message?.data) {
-      base64Audio = message.data;
+    if (audioDataChunks.length === 0 && message?.data) {
+      audioDataChunks.push(message.data);
     }
 
-    if (base64Audio) {
+    if (audioDataChunks.length > 0) {
       if (!this.firstAudioTime) {
         this.firstAudioTime = Date.now();
         this.onMetric?.('firstAudioReceived', this.firstAudioTime);
       }
-      try {
-        const decoded = base64ToInt16(base64Audio);
-        const pcm = new Int16Array(decoded.buffer.slice(0));
 
-        this.chunkRxCount++;
-        if (DEBUG_AUDIO) {
+      for (const base64Audio of audioDataChunks) {
+        try {
+          const decoded = base64ToInt16(base64Audio);
+          const pcm = new Int16Array(decoded.buffer.slice(0));
+
+          this.chunkRxCount++;
           console.log(
-            `[RX] generation=${this.generationId} chunk=${this.chunkRxCount} samples=${pcm.length}`
+            `[TURN ${this.currentTurnNumber}] audio chunk received (chunk ${this.chunkRxCount}, generation=${this.generationId}, samples=${pcm.length})`
           );
-        }
 
-        this.events.onAudioChunk(pcm, this.generationId);
-      } catch (e) {
-        console.warn('[GeminiLive] Error decoding audio chunk:', e);
+          this.events.onAudioChunk(pcm, this.generationId);
+        } catch (e) {
+          console.warn('[GeminiLive] Error decoding audio chunk:', e);
+        }
       }
     }
 
     // ── Turn complete ─────────────────────────────────────
     if (message?.serverContent?.turnComplete) {
-      if (DEBUG_AUDIO) {
-        console.log(`[TURN COMPLETE] generation=${this.generationId} totalChunks=${this.chunkRxCount}`);
-      }
+      console.log(`[TURN ${this.currentTurnNumber}] turnComplete (totalChunks=${this.chunkRxCount}, generation=${this.generationId})`);
       const finishedGen = this.generationId;
       this.events.onTurnComplete(finishedGen);
       this.generationId++;
@@ -380,6 +388,48 @@ export class GeminiLiveSession {
   }
 
   get connected(): boolean {
+    return this.isConnected && !this.isDisposed;
+  }
+
+  get sessionId(): string {
+    return this._sessionId;
+  }
+
+  get lastMessageTime(): number {
+    return this.lastMessageTimestamp;
+  }
+
+  get turnNumber(): number {
+    return this.currentTurnNumber;
+  }
+
+  setTurnNumber(turn: number): void {
+    this.currentTurnNumber = turn;
+  }
+
+  get connectionState(): 'CONNECTING' | 'OPEN' | 'CLOSING' | 'CLOSED' | 'UNKNOWN' {
+    if (!this.session) {
+      return this.isConnected ? 'CONNECTING' : 'CLOSED';
+    }
+    const ws = (this.session as any)?.conn;
+    if (ws && typeof ws.readyState === 'number') {
+      switch (ws.readyState) {
+        case 0: return 'CONNECTING';
+        case 1: return 'OPEN';
+        case 2: return 'CLOSING';
+        case 3: return 'CLOSED';
+        default: return 'UNKNOWN';
+      }
+    }
+    return this.isConnected ? 'OPEN' : 'CLOSED';
+  }
+
+  isHealthy(): boolean {
+    if (this.isDisposed || !this.isConnected || !this.session) return false;
+    const ws = (this.session as any)?.conn;
+    if (ws && typeof ws.readyState === 'number') {
+      return ws.readyState === 1; // WebSocket.OPEN
+    }
     return this.isConnected;
   }
 
@@ -393,6 +443,10 @@ export class GeminiLiveSession {
     this.pendingClientContent = [];
     this.pendingAudioQueue = [];
     try {
+      const ws = (this.session as any)?.conn;
+      if (ws && typeof ws.close === 'function') {
+        ws.close();
+      }
       this.session?.close();
     } catch {
       // ignore

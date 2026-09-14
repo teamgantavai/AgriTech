@@ -36,6 +36,9 @@ export function useMicrophone(options: MicrophoneOptions) {
     onVADInitialized,
   } = options;
 
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+
   const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
@@ -48,9 +51,9 @@ export function useMicrophone(options: MicrophoneOptions) {
     threshold: 0.012,
     silenceMs: 650,
     activityMs: 120,
-    onSpeechStart,
-    onSpeechEnd,
-    onActivity: (rms, isSpeech) => onVADChange?.(isSpeech, rms),
+    onSpeechStart: () => optionsRef.current.onSpeechStart?.(),
+    onSpeechEnd: () => optionsRef.current.onSpeechEnd?.(),
+    onActivity: (rms, isSpeech) => optionsRef.current.onVADChange?.(isSpeech, rms),
   });
 
   const start = useCallback(async (): Promise<void> => {
@@ -119,7 +122,7 @@ export function useMicrophone(options: MicrophoneOptions) {
         const { samples } = event.data as { samples: Float32Array };
 
         // If input is locked (AI speaking or processing), discard audio and pause VAD
-        if (isInputLocked?.()) {
+        if (optionsRef.current.isInputLocked?.()) {
           accumulatedSamples = [];
           accumulatedLength = 0;
           return;
@@ -149,7 +152,7 @@ export function useMicrophone(options: MicrophoneOptions) {
           accumulatedLength = remainder.length;
 
           // Double check input lock before processing VAD or sending
-          if (isInputLocked?.()) {
+          if (optionsRef.current.isInputLocked?.()) {
             return;
           }
 
@@ -159,7 +162,7 @@ export function useMicrophone(options: MicrophoneOptions) {
           // Forward PCM audio chunk to Gemini
           const int16 = float32ToInt16(chunk);
           const base64 = int16ToBase64(int16);
-          onAudioChunk(base64);
+          optionsRef.current.onAudioChunk(base64);
         }
       };
 
@@ -217,5 +220,47 @@ export function useMicrophone(options: MicrophoneOptions) {
     vad.reset();
   }, [vad]);
 
-  return { start, stop, getVADState, resetVAD };
+  const getDiagnostics = useCallback(() => {
+    const track = streamRef.current?.getAudioTracks()?.[0];
+    return {
+      streamActive: streamRef.current?.active ?? false,
+      trackReadyState: (track?.readyState ?? 'none') as 'live' | 'ended' | 'muted' | 'none',
+      audioContextState: (audioCtxRef.current?.state ?? 'closed') as 'running' | 'suspended' | 'closed',
+      isActive: isActiveRef.current,
+    };
+  }, []);
+
+  const ensureHealthyTrack = useCallback(async (): Promise<boolean> => {
+    if (!isActiveRef.current) return false;
+    const track = streamRef.current?.getAudioTracks()?.[0];
+    if (!streamRef.current || !track || track.readyState === 'ended') {
+      console.warn('[Microphone] Audio track ended unexpectedly, recovering...');
+      try {
+        const newStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            channelCount: 1,
+            sampleRate: { ideal: MIC_SAMPLE_RATE },
+          },
+          video: false,
+        });
+        streamRef.current = newStream;
+        if (audioCtxRef.current && workletNodeRef.current) {
+          sourceNodeRef.current?.disconnect();
+          const newSource = audioCtxRef.current.createMediaStreamSource(newStream);
+          sourceNodeRef.current = newSource;
+          newSource.connect(workletNodeRef.current);
+        }
+        return true;
+      } catch (e) {
+        console.error('[Microphone] Failed to recover audio track:', e);
+        return false;
+      }
+    }
+    return true;
+  }, []);
+
+  return { start, stop, getVADState, resetVAD, getDiagnostics, ensureHealthyTrack };
 }

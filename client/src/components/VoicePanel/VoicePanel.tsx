@@ -28,12 +28,12 @@ const STATE_LABEL: Record<VoiceState, string> = {
   [VoiceState.IDLE]: 'Ready',
   [VoiceState.PREPARING]: 'Preparing voice...',
   [VoiceState.CONNECTING]: 'Connecting...',
-  [VoiceState.READY_FOR_USER]: 'Ready',
+  [VoiceState.READY]: 'Ready',
   [VoiceState.LISTENING]: 'Listening...',
   [VoiceState.PROCESSING]: 'Thinking...',
   [VoiceState.AI_SPEAKING]: 'AI is speaking...',
-  [VoiceState.RECONNECTING]: 'Reconnecting...',
-  [VoiceState.ERROR]: 'Error',
+  [VoiceState.RECOVERING]: 'Reconnecting...',
+  [VoiceState.ERROR]: 'Voice connection problem',
   [VoiceState.DISCONNECTED]: 'Disconnected',
 };
 
@@ -79,9 +79,13 @@ export function VoicePanel({
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const isListening = voiceState === VoiceState.LISTENING || voiceState === VoiceState.READY_FOR_USER;
+  const isListening =
+    voiceState === VoiceState.LISTENING ||
+    voiceState === VoiceState.READY_FOR_USER;
   const isSpeaking = voiceState === VoiceState.AI_SPEAKING;
-  const isConnecting = voiceState === VoiceState.CONNECTING || voiceState === VoiceState.RECONNECTING;
+  const isConnecting =
+    voiceState === VoiceState.CONNECTING ||
+    voiceState === VoiceState.RECOVERING;
   const isError = voiceState === VoiceState.ERROR;
   const isActive = isListening || isSpeaking || voiceState === VoiceState.PROCESSING;
 
@@ -97,22 +101,28 @@ export function VoicePanel({
     ? `Listening in ${activeLangObj.nativeName}... Ask about any scheme`
     : 'Listening... Speak in Hindi, Punjabi, Marathi, English or your native language';
 
-  if (latestTurn?.text) {
+  if (isSpeaking && latestTurn?.role === 'assistant' && latestTurn?.text) {
     subtitleText = cleanMarkdown(latestTurn.text);
+  } else if (isSpeaking) {
+    subtitleText = 'AI is speaking...';
+  } else if (voiceState === VoiceState.PROCESSING) {
+    subtitleText = 'Thinking...';
   } else if (onboardingState === OnboardingState.LANGUAGE_QUESTION) {
     subtitleText = 'Which language would you like to speak in?';
   } else if (onboardingState === OnboardingState.WAITING_FOR_LANGUAGE) {
     subtitleText = 'Which language would you like to speak in? (Hindi, Punjabi, English...)';
   } else if (voiceState === VoiceState.PREPARING) {
     subtitleText = 'Preparing voice pipeline...';
+  } else if (voiceState === VoiceState.RECOVERING) {
+    subtitleText = 'Reconnecting...';
   } else if (isConnecting) {
-    subtitleText = 'Establishing secure connection...';
+    subtitleText = 'Connecting...';
   } else if (voiceState === VoiceState.READY_FOR_USER) {
     subtitleText = 'Ready! Speak whenever you want';
   } else if (isError) {
-    subtitleText = error || 'Something went wrong. Tap retry below.';
-  } else if (voiceState === VoiceState.PROCESSING) {
-    subtitleText = 'Thinking...';
+    subtitleText = error || 'Voice connection problem. Tap retry below.';
+  } else if (latestTurn?.text) {
+    subtitleText = cleanMarkdown(latestTurn.text);
   }
 
   const handleSelectLanguage = (lang: SupportedLanguage | null) => {

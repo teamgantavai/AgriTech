@@ -1,34 +1,26 @@
 // ============================================================
-// useAudioPlayback — Streaming PCM playback with gap-free chaining
+// useAudioPlayback — Resilient Streaming PCM Playback Manager
 //
-// Architecture:
-//   Gemini audio chunk (Int16Array)
-//     → enqueueChunk(pcm, generationId)
-//     → validate generationId (discard stale chunks)
-//     → decode to Float32 + create AudioBuffer
-//     → schedule on AudioContext timeline (gapless)
-//     → AudioBufferSourceNode.onended → track completion
-//   markTurnComplete(generationId)
-//     → once all scheduled nodes for that generation have ended
-//     → fire onPlaybackComplete
-//
-// Rules:
-//   - ONE AudioContext (persistent, never re-created per chunk)
-//   - ONE scheduling timeline (nextPlayTimeRef, never reset mid-response)
-//   - Chunks are played EXACTLY ONCE (no double-dispatch guard needed here
-//     because geminiLive.ts now emits each chunk exactly once)
-//   - stopAll() is the ONLY way to flush the pipeline (real interruptions only)
+// Pipeline Architecture:
+//   Gemini Live chunk (Int16Array PCM 24kHz)
+//     → enqueueChunk(pcm, generationId, turnId)
+//     → In-Memory Audio Queue (audioQueueRef)
+//     → Resilient Playback Scheduler (drainQueue loop with try/catch/finally)
+//     → Persistent AudioContext (with auto-resume and recovery)
+//     → Gapless AudioBufferSourceNode scheduling on Web Audio timeline
+//     → AudioBufferSourceNode.onended → active source cleanup
+//   markTurnComplete(generationId, turnId)
+//     → waits for queue to drain and all active sources to finish
+//     → watchdog safety timer guards against throttled onended callbacks
+//     → fires onPlaybackComplete exactly once per turn
 // ============================================================
 
 import { useRef, useCallback } from 'react';
 import { int16ToFloat32 } from '../services/audioProcessor';
 
 const OUTPUT_SAMPLE_RATE = 24000; // Gemini Live native audio output rate
-// Small lookahead applied only for the very first chunk of a new response.
-// Subsequent chunks are chained with zero gap using the scheduled end time.
-const FIRST_CHUNK_LOOKAHEAD_S = 0.05;
-
-const DEBUG_AUDIO = import.meta.env.DEV;
+const FIRST_CHUNK_LOOKAHEAD_S = 0.05; // 50ms lookahead for initial chunk
+const WATCHDOG_MARGIN_MS = 2500; // Safety watchdog margin
 
 interface PlaybackOptions {
   onPlaybackStart?: () => void;
@@ -37,48 +29,58 @@ interface PlaybackOptions {
   onFirstAudioPlayback?: (generationId: number) => void;
 }
 
+interface AudioQueueItem {
+  pcm: Int16Array;
+  generationId: number;
+  turnId: number;
+  chunkId: number;
+}
+
 export function useAudioPlayback(options: PlaybackOptions = {}) {
-  const { onPlaybackStart, onPlaybackComplete, onAnalyserData, onFirstAudioPlayback } = options;
+  // Store options in ref to avoid stale closures across re-renders
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   // ── Single persistent AudioContext ───────────────────────
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const analyserFrameRef = useRef<number | null>(null);
 
-  // ── Scheduling state ─────────────────────────────────────
-  // nextPlayTimeRef: the AudioContext time at which the next chunk should start.
-  // Never reset this mid-response — only reset after stopAll() or when a
-  // completely new response begins (i.e. after the previous generation ends).
+  // ── Audio Queue & Scheduler state ─────────────────────────
+  const audioQueueRef = useRef<AudioQueueItem[]>([]);
+  const isPlaybackLoopRunningRef = useRef(false);
   const nextPlayTimeRef = useRef<number>(0);
 
   // ── Playback lifecycle state ──────────────────────────────
   const isPlayingRef = useRef(false);
-  // Count of scheduled nodes that have not yet fired onended
   const pendingSourceCountRef = useRef(0);
-  // Whether the turn is complete (no more chunks expected for current gen)
   const turnCompleteRef = useRef(false);
-  // The generation ID for which turnComplete was received
   const turnCompleteGenRef = useRef(-1);
-  // Guard against firing completion multiple times for the same turn
   const turnCompletedFiredRef = useRef(false);
+  const watchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Active AudioBufferSourceNodes (for stopAll) ───────────
+  // ── Active AudioBufferSourceNodes (for tracking and stopAll)
   const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
 
-  // ── Current accepted generation ──────────────────────────
-  // Chunks with a different generationId are discarded (stale barge-in audio).
+  // ── Generation and turn tracking ──────────────────────────
   const currentGenerationRef = useRef<number>(-1);
+  const currentTurnIdRef = useRef<number>(1);
+  const receivedChunksCountRef = useRef<number>(0);
+  const playedChunksCountRef = useRef<number>(0);
 
-  // ── Debug counters ────────────────────────────────────────
-  const chunkPlayedCountRef = useRef(0);
+  // ── Progress & Health Timestamps ──────────────────────────
+  const lastAudioChunkTimeRef = useRef<number>(0);
+  const lastAudioPlaybackTimeRef = useRef<number>(0);
+  const audioReceivingCompleteRef = useRef<boolean>(false);
 
   // ─────────────────────────────────────────────────────────
-  // AudioContext — create once, reuse forever
+  // AudioContext — persistent lifecycle with recovery
   // ─────────────────────────────────────────────────────────
   const getAudioContext = useCallback((): AudioContext => {
     if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
+      console.log('[AudioPlayback] Initializing new AudioContext (sampleRate=24000)');
       audioCtxRef.current = new AudioContext({ sampleRate: OUTPUT_SAMPLE_RATE });
-      // Set up analyser for visualisation
+
       const analyser = audioCtxRef.current.createAnalyser();
       analyser.fftSize = 256;
       analyser.smoothingTimeConstant = 0.8;
@@ -89,37 +91,38 @@ export function useAudioPlayback(options: PlaybackOptions = {}) {
   }, []);
 
   /**
-   * Pre-warm AudioContext inside a user gesture (e.g. click "Talk with AI").
-   * Guarantees context is resumed ahead of receiving Gemini's first audio chunk.
+   * Pre-warm AudioContext inside a user gesture.
    */
   const prewarmAudioContext = useCallback(async (): Promise<void> => {
     try {
       const ctx = getAudioContext();
       if (ctx.state === 'suspended') {
         await ctx.resume();
+        console.log('[AudioPlayback] AudioContext pre-warmed & resumed');
       }
     } catch (err) {
-      console.warn('[useAudioPlayback] prewarmAudioContext error:', err);
+      console.warn('[AudioPlayback] prewarmAudioContext warning:', err);
     }
   }, [getAudioContext]);
 
   // ─────────────────────────────────────────────────────────
-  // Analyser loop (visualisation only — does NOT control playback)
+  // Analyser loop (visualisation only)
   // ─────────────────────────────────────────────────────────
   const startAnalyserLoop = useCallback(() => {
-    if (!analyserRef.current || !onAnalyserData) return;
+    if (!analyserRef.current) return;
     const analyser = analyserRef.current;
     const data = new Uint8Array(analyser.frequencyBinCount);
 
     const loop = () => {
       analyser.getByteFrequencyData(data);
-      onAnalyserData(data);
+      optionsRef.current.onAnalyserData?.(data);
       analyserFrameRef.current = requestAnimationFrame(loop);
     };
+
     if (!analyserFrameRef.current) {
       analyserFrameRef.current = requestAnimationFrame(loop);
     }
-  }, [onAnalyserData]);
+  }, []);
 
   const stopAnalyserLoop = useCallback(() => {
     if (analyserFrameRef.current) {
@@ -129,197 +132,281 @@ export function useAudioPlayback(options: PlaybackOptions = {}) {
   }, []);
 
   // ─────────────────────────────────────────────────────────
-  // Internal: check whether all audio for the current generation has finished
-  // Single completion condition:
-  // turnComplete === true AND pendingSourceCount === 0 AND not already handled
+  // Clear safety watchdog timer
+  // ─────────────────────────────────────────────────────────
+  const clearWatchdog = useCallback(() => {
+    if (watchdogTimerRef.current) {
+      clearTimeout(watchdogTimerRef.current);
+      watchdogTimerRef.current = null;
+    }
+  }, []);
+
+  // ─────────────────────────────────────────────────────────
+  // Check Playback Completion
+  // Fired when:
+  // 1. turnComplete / audioReceivingComplete is true
+  // 2. pendingSourceCount === 0 AND activeSources is empty
+  // 3. audioQueue is empty
+  // 4. completion hasn't already fired for this turn
   // ─────────────────────────────────────────────────────────
   const checkPlaybackCompletion = useCallback(() => {
+    const isReceivingDone = turnCompleteRef.current || audioReceivingCompleteRef.current;
     if (
-      turnCompleteRef.current &&
+      isReceivingDone &&
       pendingSourceCountRef.current === 0 &&
+      activeSourcesRef.current.length === 0 &&
+      audioQueueRef.current.length === 0 &&
       !turnCompletedFiredRef.current
     ) {
       turnCompletedFiredRef.current = true;
-      console.log('[AUDIO] playback complete');
+      clearWatchdog();
       isPlayingRef.current = false;
       stopAnalyserLoop();
       nextPlayTimeRef.current = 0;
-      onPlaybackComplete?.();
+      activeSourcesRef.current = [];
+
+      console.log(
+        `[TURN ${currentTurnIdRef.current}] audio playback completed (received=${receivedChunksCountRef.current}, played=${playedChunksCountRef.current})`
+      );
+      console.log(
+        `[QUEUE] received=${receivedChunksCountRef.current} played=${playedChunksCountRef.current} remaining=0`
+      );
+
+      optionsRef.current.onPlaybackComplete?.();
     }
-  }, [stopAnalyserLoop, onPlaybackComplete]);
+  }, [clearWatchdog, stopAnalyserLoop]);
 
   // ─────────────────────────────────────────────────────────
-  // enqueueChunk — the ONE entry point for audio data
-  //
-  // Called for every received Gemini audio chunk.
-  // Schedules it on the Web Audio timeline for gapless playback.
+  // Resilient Playback Scheduler Loop
+  // Drains audioQueueRef and schedules chunks onto AudioContext timeline
   // ─────────────────────────────────────────────────────────
-  const enqueueChunk = useCallback(
-    (pcm: Int16Array, generationId: number) => {
-      // ── Stale generation check ──────────────────────────
-      if (generationId < currentGenerationRef.current && currentGenerationRef.current !== -1) {
-        if (DEBUG_AUDIO) {
-          console.log(
-            `[DISCARD] stale chunk generation=${generationId} current=${currentGenerationRef.current}`
-          );
+  const drainQueue = useCallback(async () => {
+    if (isPlaybackLoopRunningRef.current) return;
+    if (audioQueueRef.current.length === 0) {
+      checkPlaybackCompletion();
+      return;
+    }
+
+    isPlaybackLoopRunningRef.current = true;
+
+    try {
+      const ctx = getAudioContext();
+      if (ctx.state === 'suspended') {
+        try {
+          await ctx.resume();
+        } catch (e) {
+          console.warn('[AudioPlayback] Failed to resume AudioContext:', e);
         }
-        return;
       }
 
-      // ── Accept new generation or new response turn ────────
+      while (audioQueueRef.current.length > 0) {
+        const item = audioQueueRef.current.shift()!;
+        const float32 = int16ToFloat32(item.pcm);
+
+        const buffer = ctx.createBuffer(1, float32.length, OUTPUT_SAMPLE_RATE);
+        buffer.getChannelData(0).set(float32);
+
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+
+        if (analyserRef.current) {
+          source.connect(analyserRef.current);
+        } else {
+          source.connect(ctx.destination);
+        }
+
+        // Gapless scheduling
+        const isFirstChunk = nextPlayTimeRef.current <= ctx.currentTime;
+        const startTime = isFirstChunk
+          ? ctx.currentTime + FIRST_CHUNK_LOOKAHEAD_S
+          : nextPlayTimeRef.current;
+
+        const chunkDuration = float32.length / OUTPUT_SAMPLE_RATE;
+        source.start(startTime);
+        nextPlayTimeRef.current = startTime + chunkDuration;
+
+        lastAudioPlaybackTimeRef.current = Date.now();
+        playedChunksCountRef.current++;
+        pendingSourceCountRef.current++;
+        activeSourcesRef.current.push(source);
+
+        // Trigger playback start lifecycle on first chunk
+        if (!isPlayingRef.current) {
+          isPlayingRef.current = true;
+          startAnalyserLoop();
+          console.log(`[TURN ${item.turnId}] audio playback started`);
+          optionsRef.current.onPlaybackStart?.();
+          optionsRef.current.onFirstAudioPlayback?.(item.generationId);
+        }
+
+        source.onended = () => {
+          try {
+            source.disconnect();
+          } catch {
+            // ignore
+          }
+          lastAudioPlaybackTimeRef.current = Date.now();
+          activeSourcesRef.current = activeSourcesRef.current.filter((s) => s !== source);
+          pendingSourceCountRef.current = Math.max(0, pendingSourceCountRef.current - 1);
+
+          checkPlaybackCompletion();
+        };
+      }
+    } catch (error) {
+      console.error('[AudioPlayback] Error in scheduler loop:', error);
+    } finally {
+      isPlaybackLoopRunningRef.current = false;
+
+      // Self-healing: if more audio entered the queue while running, restart loop
+      if (audioQueueRef.current.length > 0) {
+        setTimeout(() => {
+          drainQueue();
+        }, 0);
+      } else {
+        checkPlaybackCompletion();
+      }
+    }
+  }, [getAudioContext, startAnalyserLoop, checkPlaybackCompletion]);
+
+  // ─────────────────────────────────────────────────────────
+  // enqueueChunk — The entry point for incoming Gemini audio
+  // ─────────────────────────────────────────────────────────
+  const enqueueChunk = useCallback(
+    (pcm: Int16Array, generationId: number, turnId?: number) => {
+      const activeTurn = turnId ?? currentTurnIdRef.current;
+      currentTurnIdRef.current = activeTurn;
+
+      // If a new generation begins or turnCompleted previously fired, synchronize
       if (
         generationId > currentGenerationRef.current ||
         currentGenerationRef.current === -1 ||
         turnCompletedFiredRef.current
       ) {
-        // A new generation starts — reset scheduling so this chunk
-        // begins playback promptly, not at the end of a previous response.
         currentGenerationRef.current = generationId;
-        chunkPlayedCountRef.current = 0;
         turnCompleteRef.current = false;
+        audioReceivingCompleteRef.current = false;
         turnCompletedFiredRef.current = false;
         turnCompleteGenRef.current = -1;
-        // Reset scheduled time so first chunk gets the lookahead
+        receivedChunksCountRef.current = 0;
+        playedChunksCountRef.current = 0;
         nextPlayTimeRef.current = 0;
-        if (DEBUG_AUDIO) {
-          console.log(`[NEW GEN] generation=${generationId}`);
-        }
       }
 
-      const ctx = getAudioContext();
+      lastAudioChunkTimeRef.current = Date.now();
+      audioReceivingCompleteRef.current = false;
+      receivedChunksCountRef.current++;
+      const chunkId = receivedChunksCountRef.current;
 
-      // Resume context if suspended (mobile browsers require user gesture)
-      if (ctx.state === 'suspended') {
-        ctx.resume().catch(() => {});
-      }
+      audioQueueRef.current.push({
+        pcm,
+        generationId,
+        turnId: activeTurn,
+        chunkId,
+      });
 
-      const float32 = int16ToFloat32(pcm);
-      const buffer = ctx.createBuffer(1, float32.length, OUTPUT_SAMPLE_RATE);
-      buffer.getChannelData(0).set(float32);
-
-      const source = ctx.createBufferSource();
-      source.buffer = buffer;
-
-      // Connect through analyser for visualisation
-      if (analyserRef.current) {
-        source.connect(analyserRef.current);
-      } else {
-        source.connect(ctx.destination);
-      }
-
-      // ── Gapless scheduling ──────────────────────────────
-      // For the FIRST chunk of a response, apply a tiny lookahead so the
-      // AudioContext has time to prepare the buffer.
-      // For ALL subsequent chunks, chain exactly to the end of the previous.
-      const isFirstChunk = nextPlayTimeRef.current <= ctx.currentTime;
-      const startTime = isFirstChunk
-        ? ctx.currentTime + FIRST_CHUNK_LOOKAHEAD_S
-        : nextPlayTimeRef.current;
-
-      const chunkDuration = float32.length / OUTPUT_SAMPLE_RATE;
-      source.start(startTime);
-      nextPlayTimeRef.current = startTime + chunkDuration;
-
-      chunkPlayedCountRef.current++;
-      pendingSourceCountRef.current++;
-      activeSourcesRef.current.push(source);
-
-      const chunkNum = chunkPlayedCountRef.current;
-      if (DEBUG_AUDIO) {
-        console.log(
-          `[PLAY] generation=${generationId} chunk=${chunkNum} ` +
-          `startAt=${startTime.toFixed(3)}s duration=${chunkDuration.toFixed(3)}s ` +
-          `nextAt=${nextPlayTimeRef.current.toFixed(3)}s`
-        );
-      }
-
-      source.onended = () => {
-        activeSourcesRef.current = activeSourcesRef.current.filter((s) => s !== source);
-        pendingSourceCountRef.current = Math.max(0, pendingSourceCountRef.current - 1);
-
-        if (DEBUG_AUDIO) {
-          console.log(
-            `[END] generation=${generationId} chunk=${chunkNum} pending=${pendingSourceCountRef.current}`
-          );
-        }
-
-        checkPlaybackCompletion();
-      };
-
-      // ── Playback lifecycle ──────────────────────────────
-      if (!isPlayingRef.current) {
-        isPlayingRef.current = true;
-        startAnalyserLoop();
-        onPlaybackStart?.();
-        onFirstAudioPlayback?.(generationId);
-      }
+      // Kick scheduler
+      drainQueue();
     },
-    [getAudioContext, startAnalyserLoop, checkPlaybackCompletion, onPlaybackStart, onFirstAudioPlayback]
+    [drainQueue]
   );
 
   // ─────────────────────────────────────────────────────────
-  // markTurnComplete — called when Gemini signals end of generation
-  //
-  // Does NOT stop audio. Marks that no more chunks are coming,
-  // then lets onended callbacks naturally finish the pipeline.
+  // markTurnComplete — Signals that Gemini generation ended
   // ─────────────────────────────────────────────────────────
   const markTurnComplete = useCallback(
-    (generationId: number) => {
+    (generationId: number, turnId?: number) => {
+      const activeTurn = turnId ?? currentTurnIdRef.current;
       turnCompleteRef.current = true;
+      audioReceivingCompleteRef.current = true;
       turnCompleteGenRef.current = generationId;
 
-      if (DEBUG_AUDIO) {
-        console.log(
-          `[TURN COMPLETE] generation=${generationId} pending=${pendingSourceCountRef.current}`
-        );
-      }
+      console.log(
+        `[TURN ${activeTurn}] turnComplete marked (pendingSources=${pendingSourceCountRef.current}, activeSources=${activeSourcesRef.current.length}, queued=${audioQueueRef.current.length}, rx=${receivedChunksCountRef.current})`
+      );
 
-      // If all sources already ended (or 0 sources scheduled), fire completion immediately
-      if (pendingSourceCountRef.current === 0) {
+      // If nothing pending or queued, complete immediately
+      if (pendingSourceCountRef.current === 0 && activeSourcesRef.current.length === 0 && audioQueueRef.current.length === 0) {
         checkPlaybackCompletion();
         return;
       }
 
-      if (generationId !== currentGenerationRef.current && currentGenerationRef.current !== -1) {
-        // Stale turnComplete — ignore
-        if (DEBUG_AUDIO) {
-          console.log(
-            `[TURN COMPLETE STALE] generation=${generationId} current=${currentGenerationRef.current}`
+      // Schedule watchdog safety timer
+      clearWatchdog();
+      const ctx = audioCtxRef.current;
+      const remainingTimeS = ctx && nextPlayTimeRef.current > ctx.currentTime
+        ? nextPlayTimeRef.current - ctx.currentTime
+        : 1.0;
+      const watchdogMs = Math.max(1500, Math.ceil(remainingTimeS * 1000) + WATCHDOG_MARGIN_MS);
+
+      watchdogTimerRef.current = setTimeout(() => {
+        if (!turnCompletedFiredRef.current && (turnCompleteRef.current || audioReceivingCompleteRef.current)) {
+          console.warn(
+            `[TURN ${activeTurn}] [WATCHDOG] Force completing turn playback after ${watchdogMs}ms`
           );
+          // Clean up any remaining sources
+          for (const s of activeSourcesRef.current) {
+            try {
+              s.stop();
+              s.disconnect();
+            } catch {
+              // ignore
+            }
+          }
+          activeSourcesRef.current = [];
+          pendingSourceCountRef.current = 0;
+          audioQueueRef.current = [];
+          checkPlaybackCompletion();
         }
-        return;
-      }
+      }, watchdogMs);
 
       checkPlaybackCompletion();
     },
-    [checkPlaybackCompletion]
+    [clearWatchdog, checkPlaybackCompletion]
   );
 
   // ─────────────────────────────────────────────────────────
-  // stopAll — ONLY for genuine user interruptions or session teardown
-  //
-  // Immediately halts all scheduled audio and resets the pipeline.
+  // resetForNewTurn — Cleanly synchronizes per-turn state
+  // ─────────────────────────────────────────────────────────
+  const resetForNewTurn = useCallback((turnId: number, generationId?: number) => {
+    clearWatchdog();
+    currentTurnIdRef.current = turnId;
+    if (typeof generationId === 'number') {
+      currentGenerationRef.current = generationId;
+    }
+    turnCompleteRef.current = false;
+    audioReceivingCompleteRef.current = false;
+    turnCompletedFiredRef.current = false;
+    turnCompleteGenRef.current = -1;
+    receivedChunksCountRef.current = 0;
+    playedChunksCountRef.current = 0;
+    audioQueueRef.current = [];
+    nextPlayTimeRef.current = 0;
+    lastAudioChunkTimeRef.current = 0;
+    lastAudioPlaybackTimeRef.current = 0;
+  }, [clearWatchdog]);
+
+  // ─────────────────────────────────────────────────────────
+  // stopAll — Flush audio for interruption or teardown
   // ─────────────────────────────────────────────────────────
   const stopAll = useCallback(() => {
-    if (DEBUG_AUDIO) {
-      console.log(
-        `[STOP ALL] generation=${currentGenerationRef.current} pending=${pendingSourceCountRef.current}`
-      );
-    }
+    clearWatchdog();
+    audioQueueRef.current = [];
 
     for (const source of activeSourcesRef.current) {
       try {
         source.stop();
         source.disconnect();
       } catch {
-        // already stopped — ignore
+        // already stopped
       }
     }
     activeSourcesRef.current = [];
     pendingSourceCountRef.current = 0;
     turnCompleteRef.current = false;
+    audioReceivingCompleteRef.current = false;
     turnCompleteGenRef.current = -1;
     turnCompletedFiredRef.current = false;
+    isPlaybackLoopRunningRef.current = false;
 
     const ctx = audioCtxRef.current;
     nextPlayTimeRef.current = ctx ? ctx.currentTime : 0;
@@ -327,35 +414,54 @@ export function useAudioPlayback(options: PlaybackOptions = {}) {
     if (isPlayingRef.current) {
       isPlayingRef.current = false;
       stopAnalyserLoop();
-      // Note: we do NOT call onPlaybackComplete here — this is an interruption,
-      // not a natural end. The caller (useGeminiLive) handles state transition.
     }
-  }, [stopAnalyserLoop]);
+  }, [clearWatchdog, stopAnalyserLoop]);
 
   // ─────────────────────────────────────────────────────────
-  // acceptGeneration — call when starting a barge-in so new chunks
-  // from the next generation are accepted immediately
+  // acceptGeneration
   // ─────────────────────────────────────────────────────────
   const acceptGeneration = useCallback((generationId: number) => {
     currentGenerationRef.current = generationId;
-    chunkPlayedCountRef.current = 0;
     turnCompleteRef.current = false;
+    audioReceivingCompleteRef.current = false;
     turnCompleteGenRef.current = -1;
+    turnCompletedFiredRef.current = false;
     nextPlayTimeRef.current = 0;
   }, []);
 
-  /**
-   * Get the AnalyserNode for external visualisation.
-   */
   const getAnalyser = useCallback((): AnalyserNode | null => {
     return analyserRef.current;
   }, []);
 
   const isPlaying = () => isPlayingRef.current;
 
-  /**
-   * Clean up audio context on unmount.
-   */
+  // ─────────────────────────────────────────────────────────
+  // Diagnostics inspection
+  // ─────────────────────────────────────────────────────────
+  const getDiagnostics = useCallback(() => {
+    const queueLen = audioQueueRef.current.length;
+    const activeSources = activeSourcesRef.current.length;
+    const schedulerState = isPlaybackLoopRunningRef.current
+      ? ('running' as const)
+      : queueLen > 0
+      ? ('scheduled' as const)
+      : ('idle' as const);
+
+    return {
+      audioContextState: (audioCtxRef.current?.state || 'closed') as 'running' | 'suspended' | 'closed',
+      queueLength: queueLen,
+      activeSources,
+      schedulerState,
+      chunksReceived: receivedChunksCountRef.current,
+      chunksPlayed: playedChunksCountRef.current,
+      chunksRemaining: queueLen + pendingSourceCountRef.current,
+      lastAudioChunkTime: lastAudioChunkTimeRef.current,
+      lastAudioPlaybackTime: lastAudioPlaybackTimeRef.current,
+      audioReceivingComplete: turnCompleteRef.current || audioReceivingCompleteRef.current,
+      isPlaying: isPlayingRef.current,
+    };
+  }, []);
+
   const dispose = useCallback(() => {
     stopAll();
     stopAnalyserLoop();
@@ -371,12 +477,19 @@ export function useAudioPlayback(options: PlaybackOptions = {}) {
   return {
     enqueueChunk,
     markTurnComplete,
+    resetForNewTurn,
     stopAll,
     acceptGeneration,
     getAnalyser,
     isPlaying,
+    isAudioActive: () => audioQueueRef.current.length > 0 || activeSourcesRef.current.length > 0 || isPlayingRef.current,
+    isReceivingComplete: () => turnCompleteRef.current || audioReceivingCompleteRef.current,
+    getQueueLength: () => audioQueueRef.current.length,
+    getActiveSourcesCount: () => activeSourcesRef.current.length,
+    getLastProgressTime: () => Math.max(lastAudioChunkTimeRef.current, lastAudioPlaybackTimeRef.current),
     dispose,
     getAudioContext,
     prewarmAudioContext,
+    getDiagnostics,
   };
 }
