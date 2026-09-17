@@ -97,6 +97,28 @@ export function getFarmerContext(): FarmerContext {
   };
 }
 
+export interface ActiveServiceContext {
+  id?: string;
+  title?: string;
+  category?: string;
+  helpsWith?: string;
+  source?: string;
+  officialUrl?: string;
+}
+
+export function setActiveServiceContext(ctx: ActiveServiceContext | null): void {
+  if (typeof window !== 'undefined') {
+    (window as any).__sahkar_service_ctx = ctx;
+  }
+}
+
+export function getActiveServiceContext(): ActiveServiceContext | null {
+  if (typeof window !== 'undefined') {
+    return (window as any).__sahkar_service_ctx || null;
+  }
+  return null;
+}
+
 export interface SupportedLanguage {
   code: string;
   name: string;
@@ -360,7 +382,29 @@ CROP CALENDAR TOOL RULES:
 4. If data is not available, state honestly: "मेरे पास इस राज्य और महीने के लिए crop calendar की जानकारी उपलब्ध नहीं है।" Do not fabricate data.
 5. If the farmer asks to change state (e.g. "मेरा राज्य पंजाब कर दो", "राजस्थान का कैलेंडर दिखाओ"), invoke 'setCropCalendarState' to update the UI automatically.`;
 
+  const serviceCtx = getActiveServiceContext();
+  const serviceContext = serviceCtx && serviceCtx.title ? `
+CURRENT ACTIVE SERVICE IN FOCUS:
+The user is currently viewing the dedicated page for this government service:
+- Scheme Title: ${serviceCtx.title}
+- Category: ${serviceCtx.category || 'Government Scheme'}
+- Description: ${serviceCtx.helpsWith || ''}
+- Official Portal: ${serviceCtx.officialUrl || ''}
+- Department / Source: ${serviceCtx.source || 'Government of India'}
+
+IMPORTANT FOR THIS SERVICE:
+When the user asks questions such as:
+- "Can I get this?" / "क्या मुझे यह मिल सकता है?"
+- "What documents do I need?" / "कौन से दस्तावेज़ चाहिए?"
+- "How do I apply?" / "आवेदन कैसे करें?"
+- "What is the benefit?" / "क्या फायदा होगा?"
+- "Tell me about this scheme" / "मुझे इस योजना के बारे में बताओ"
+They are asking specifically about "${serviceCtx.title}". Always prioritize this service and answer directly without asking "Which service are you talking about?".
+` : '';
+
   return `You are Sahkar Sathi (सहकार साथी), a highly professional, warm, and articulate AI voice assistant dedicated to Indian agriculture, government schemes, farmers, cooperatives (PACS), dairy, fisheries, and rural livelihoods.
+
+${serviceContext}
 
 ${flowInstruction}
 

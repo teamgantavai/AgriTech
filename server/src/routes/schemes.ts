@@ -1,4 +1,6 @@
 import { Router, Request, Response } from 'express';
+import fs from 'fs';
+import path from 'path';
 import { getAllRecords, KBRecord } from '../services/knowledgeBase';
 
 export const schemesRouter = Router();
@@ -501,6 +503,31 @@ schemesRouter.get('/', (req: Request, res: Response) => {
     totalPages: Math.ceil(total / limit),
     schemes: paginated,
   });
+});
+
+// GET /api/schemes/curated - Curated government services in Hindi (or English)
+schemesRouter.get('/curated', (req: Request, res: Response) => {
+  const lang = ((req.query.lang as string) || 'hi').toLowerCase();
+  try {
+    const candidates = [
+      path.resolve(process.cwd(), '../data/services_hi.json'),
+      path.resolve(process.cwd(), 'data/services_hi.json'),
+      path.resolve(__dirname, '../../../data/services_hi.json'),
+    ];
+    for (const filePath of candidates) {
+      if (fs.existsSync(filePath)) {
+        const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        return res.json({
+          language: 'hi',
+          total: data.length,
+          services: data,
+        });
+      }
+    }
+  } catch (err) {
+    console.error('Failed to read services_hi.json:', err);
+  }
+  return res.status(500).json({ error: 'Could not load Hindi services' });
 });
 
 // GET /api/schemes/:id - Get scheme details by id, slug, or topic

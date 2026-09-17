@@ -27,34 +27,87 @@ let cachedCategoryCatalog = '';
 
 const CSV_PATH = path.resolve(__dirname, '../../../data/knowledge.csv');
 
-// Multilingual & agricultural synonym expansion
+// ── Comprehensive multilingual synonym expansion for Gram Sathi ──────────────
 const SYNONYMS: Record<string, string[]> = {
-  'loan': ['loan', 'ऋण', 'कर्ज', 'credit', 'kcc', 'udyami', 'finance', 'bank', 'assistance'],
-  'ऋण': ['loan', 'कर्ज', 'credit', 'kcc', 'udyami', 'finance', 'bank'],
-  'कर्ज': ['loan', 'ऋण', 'credit', 'kcc', 'udyami', 'finance', 'bank'],
-  'लोन': ['loan', 'ऋण', 'कर्ज', 'credit', 'kcc', 'udyami', 'finance', 'bank'],
+  // Financial / Loans
+  'loan': ['loan', 'ऋण', 'कर्ज', 'credit', 'kcc', 'udyami', 'finance', 'bank', 'assistance', 'mudra'],
+  'ऋण': ['loan', 'कर्ज', 'credit', 'kcc', 'finance', 'bank'],
+  'कर्ज': ['loan', 'ऋण', 'credit', 'finance', 'bank'],
+  'लोन': ['loan', 'ऋण', 'कर्ज', 'credit', 'finance', 'bank'],
+  // Insurance
   'bima': ['insurance', 'bima', 'बीमा', 'pmfby', 'claim', 'fasal'],
   'insurance': ['bima', 'बीमा', 'pmfby', 'claim', 'fasal', 'insurance'],
   'बीमा': ['insurance', 'bima', 'pmfby', 'claim', 'fasal'],
+  // Agriculture
   'fasal': ['crop', 'agriculture', 'krishi', 'खेती', 'फसल', 'harvest'],
   'crop': ['fasal', 'agriculture', 'krishi', 'खेती', 'फसल', 'harvest'],
   'फसल': ['crop', 'fasal', 'agriculture', 'krishi', 'खेती', 'bima'],
+  'kisan': ['farmer', 'kisan', 'किसान', 'agriculture', 'krishi', 'fasal'],
+  'किसान': ['farmer', 'kisan', 'agriculture', 'krishi', 'fasal'],
+  'farmer': ['kisan', 'किसान', 'agriculture', 'krishi', 'fasal', 'farmer'],
+  // Subsidy
   'subsidy': ['subsidy', 'सब्सिडी', 'अनुदान', 'financial assistance', 'grant', 'concession'],
   'सब्सिडी': ['subsidy', 'अनुदान', 'financial assistance', 'grant'],
   'अनुदान': ['subsidy', 'सब्सिडी', 'financial assistance', 'grant'],
+  // Cooperative
   'pacs': ['pacs', 'cooperative', 'credit society', 'पैक्स', 'सहकारी', 'समिति'],
   'पैक्स': ['pacs', 'cooperative', 'credit society', 'सहकारी'],
   'cooperative': ['cooperative', 'sahkari', 'सहकारी', 'samiti', 'society', 'bylaws'],
   'सहकारी': ['cooperative', 'sahkari', 'samiti', 'society', 'pacs'],
+  // Farm equipment
+  'tractor': ['tractor', 'machinery', 'equipment', 'pump', 'उपकरण', 'मशीन', 'mechanization'],
+  'मशीन': ['machinery', 'equipment', 'tractor', 'pump', 'tools'],
+  // Dairy / Animal
   'dairy': ['dairy', 'milk', 'milch', 'cow', 'cattle', 'animal husbandry', 'दुग्ध', 'पशु'],
   'पशु': ['animal', 'cattle', 'milch', 'dairy', 'goat', 'bakri', 'livestock'],
   'दुग्ध': ['dairy', 'milk', 'milch', 'cow', 'cattle', 'animal husbandry'],
-  'tractor': ['tractor', 'machinery', 'equipment', 'pump', 'उपकरण', 'मशीन', 'mechanization'],
-  'मशीन': ['machinery', 'equipment', 'tractor', 'pump', 'tools'],
+  // Fishery
   'fishery': ['fishery', 'fish', 'matsya', 'मत्स्य', 'मछली', 'boat'],
   'मछली': ['fish', 'fishery', 'matsya', 'boat', 'marine'],
-  'pmkisan': ['pm-kisan', 'pmkisan', 'kisan samman', 'सम्मान निधि'],
+  // Central schemes
+  'pmkisan': ['pm-kisan', 'pmkisan', 'kisan samman', 'सम्मान निधि', 'pm kisan'],
   'kcc': ['kcc', 'kisan credit card', 'loan', 'credit', 'ऋण'],
+  'pmfby': ['pmfby', 'fasal bima', 'crop insurance', 'फसल बीमा'],
+  'pmay': ['pmay', 'pradhan mantri awas', 'housing', 'आवास', 'house', 'ghar'],
+  'mudra': ['mudra', 'pm mudra', 'business loan', 'micro loan', 'व्यापार', 'business'],
+  // Education / Students
+  'scholarship': ['scholarship', 'छात्रवृत्ति', 'fellowship', 'education', 'student', 'study', 'vidyarthi'],
+  'छात्रवृत्ति': ['scholarship', 'fellowship', 'education', 'student', 'study'],
+  'student': ['student', 'vidyarthi', 'छात्र', 'scholarship', 'education', 'padhai'],
+  'education': ['education', 'scholarship', 'school', 'college', 'study', 'vidya', 'शिक्षा'],
+  'शिक्षा': ['education', 'scholarship', 'school', 'college', 'study'],
+  // Women
+  'women': ['women', 'mahila', 'महिला', 'lady', 'ladies', 'beti', 'girl'],
+  'महिला': ['women', 'mahila', 'lady', 'beti', 'girl'],
+  'beti': ['girl', 'daughter', 'beti', 'women', 'mahila', 'बेटी'],
+  // Senior citizens
+  'pension': ['pension', 'old age', 'senior citizen', 'वृद्ध', 'बुजुर्ग', 'elderly', 'retirement'],
+  'बुजुर्ग': ['pension', 'old age', 'senior citizen', 'elderly', 'वृद्ध'],
+  // Disability
+  'disability': ['disability', 'divyang', 'दिव्यांग', 'handicap', 'disabled', 'adip', 'nhfdc'],
+  'दिव्यांग': ['disability', 'divyang', 'handicap', 'disabled'],
+  // SC/ST/OBC
+  'sc': ['scheduled caste', 'sc', 'dalit', 'अनुसूचित जाति', 'harijans'],
+  'st': ['scheduled tribe', 'st', 'tribal', 'आदिवासी', 'अनुसूचित जनजाति'],
+  'obc': ['obc', 'other backward class', 'पिछड़ा वर्ग'],
+  // Certificates / Documents
+  'certificate': ['certificate', 'प्रमाण पत्र', 'caste certificate', 'income certificate', 'domicile', 'document'],
+  'प्रमाण': ['certificate', 'document', 'proof', 'caste', 'income', 'domicile'],
+  'aadhaar': ['aadhaar', 'aadhar', 'uid', 'आधार', 'identity', 'id card'],
+  'आधार': ['aadhaar', 'aadhar', 'uid', 'identity', 'id card'],
+  'ration': ['ration', 'ration card', 'राशन', 'food security', 'pds', 'annapurna'],
+  'राशन': ['ration', 'ration card', 'food security', 'pds'],
+  // Employment / Business
+  'employment': ['employment', 'job', 'rozgar', 'रोज़गार', 'unemployment', 'mgnregs', 'nrega'],
+  'रोज़गार': ['employment', 'job', 'rozgar', 'unemployment', 'nrega'],
+  'business': ['business', 'व्यापार', 'enterprise', 'startup', 'mudra', 'msme', 'udyam'],
+  'व्यापार': ['business', 'enterprise', 'startup', 'mudra', 'msme'],
+  // Housing
+  'housing': ['housing', 'awas', 'आवास', 'ghar', 'house', 'pmay', 'shelter'],
+  'आवास': ['housing', 'awas', 'ghar', 'house', 'pmay'],
+  // Health
+  'health': ['health', 'swasthya', 'स्वास्थ्य', 'medical', 'hospital', 'ayushman', 'insurance'],
+  'स्वास्थ्य': ['health', 'medical', 'hospital', 'ayushman'],
 };
 
 export async function initKnowledgeBase(): Promise<void> {
@@ -87,13 +140,13 @@ export async function initKnowledgeBase(): Promise<void> {
     categories,
   };
 
-  // Build a structured catalog of all schemes grouped by domain for Gemini's comprehensive awareness
+  // Build a structured catalog of all schemes grouped by domain
   const categoryGroups: Record<string, string[]> = {};
   records.forEach(r => {
     const cat = r.category || 'General';
     if (!categoryGroups[cat]) categoryGroups[cat] = [];
     const name = r.title || r.topic || '';
-    if (name && categoryGroups[cat].length < 35) { // concise representative catalog per category
+    if (name && categoryGroups[cat].length < 35) {
       categoryGroups[cat].push(name);
     }
   });
@@ -137,7 +190,7 @@ function expandTokensWithSynonyms(tokens: string[]): string[] {
   return Array.from(expanded);
 }
 
-function scoreRecord(record: KBRecord, queryTokens: string[]): number {
+function scoreRecord(record: KBRecord, queryTokens: string[], stateHint?: string): number {
   const title = (record.title || '').toLowerCase();
   const topic = (record.topic || '').toLowerCase();
   const keywords = (record.keywords || '').toLowerCase();
@@ -148,7 +201,7 @@ function scoreRecord(record: KBRecord, queryTokens: string[]): number {
   let score = 0;
 
   for (const qt of queryTokens) {
-    if (title.includes(qt)) score += 3.0; // Strongest match on title
+    if (title.includes(qt)) score += 3.0;
     if (topic.includes(qt)) score += 2.5;
     if (keywords.includes(qt)) score += 2.0;
     if (question.includes(qt)) score += 1.5;
@@ -156,7 +209,37 @@ function scoreRecord(record: KBRecord, queryTokens: string[]): number {
     if (answer.includes(qt)) score += 0.8;
   }
 
+  // State-aware boost: if a state is mentioned and the record's answer/keywords match
+  if (stateHint && score > 0) {
+    const stateLower = stateHint.toLowerCase();
+    if (
+      answer.includes(stateLower) ||
+      keywords.includes(stateLower) ||
+      title.includes(stateLower) ||
+      question.includes(stateLower)
+    ) {
+      score += 2.0; // Boost state-specific records
+    }
+  }
+
   return score;
+}
+
+/**
+ * Extracts a state hint from the query (e.g., "Punjab", "UP", "Rajasthan")
+ */
+function extractStateHint(query: string): string | undefined {
+  const stateNames = [
+    'punjab', 'haryana', 'himachal pradesh', 'himachal', 'uttarakhand', 'uttar pradesh',
+    'up', 'bihar', 'jharkhand', 'rajasthan', 'gujarat', 'maharashtra', 'goa',
+    'madhya pradesh', 'mp', 'chhattisgarh', 'west bengal', 'odisha', 'assam',
+    'meghalaya', 'manipur', 'nagaland', 'mizoram', 'tripura', 'arunachal pradesh',
+    'sikkim', 'telangana', 'andhra pradesh', 'karnataka', 'kerala', 'tamil nadu',
+    'delhi', 'jammu', 'kashmir', 'ladakh', 'chandigarh', 'lakshadweep', 'puducherry',
+    'andaman', 'nicobar', 'dadra', 'daman', 'diu',
+  ];
+  const queryLower = query.toLowerCase();
+  return stateNames.find(s => queryLower.includes(s));
 }
 
 /**
@@ -169,16 +252,16 @@ export function retrieveContext(query: string, topN = 8, compact = false): strin
   if (rawTokens.length === 0) return '';
 
   const expandedTokens = expandTokensWithSynonyms(rawTokens);
+  const stateHint = extractStateHint(query);
 
   const limit = compact ? Math.min(topN, 2) : topN;
   const scored = records
-    .map(r => ({ record: r, score: scoreRecord(r, expandedTokens) }))
+    .map(r => ({ record: r, score: scoreRecord(r, expandedTokens, stateHint) }))
     .filter(x => x.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
 
   if (scored.length === 0) {
-    // In compact voice mode, don't dump catalog to save tokens and eliminate latency
     return compact ? '' : cachedCategoryCatalog;
   }
 
@@ -193,15 +276,35 @@ Topic: ${record.topic || 'N/A'}
 Summary / Question: ${record.question || 'N/A'}
 Official Details & Benefits: ${record.answer || 'N/A'}
 Keywords: ${record.keywords || 'N/A'}
-Official Portal / Source: ${record.url || record.source || 'Official Government Portal'}`;
+Source Type: ${record.source || 'N/A'}
+Official Portal / Source: ${record.url || 'Official Government Portal'}`;
   }).join(compact ? '\n' : '\n\n---\n\n');
 
   if (compact) {
     return detailedSchemes;
   }
 
-  // Combine top matching scheme details with the overarching catalog summary
   return `${detailedSchemes}\n\n---\n${cachedCategoryCatalog}`;
+}
+
+/**
+ * Returns top matching scheme records as structured objects for scheme cards.
+ */
+export function retrieveSchemeRecords(query: string, topN = 6): KBRecord[] {
+  if (records.length === 0) return [];
+
+  const rawTokens = tokenize(query);
+  if (rawTokens.length === 0) return [];
+
+  const expandedTokens = expandTokensWithSynonyms(rawTokens);
+  const stateHint = extractStateHint(query);
+
+  return records
+    .map(r => ({ record: r, score: scoreRecord(r, expandedTokens, stateHint) }))
+    .filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topN)
+    .map(x => x.record);
 }
 
 /**
@@ -223,28 +326,39 @@ export function getSuggestionsForQuery(query: string, language: string = 'hi'): 
     if (record.title && suggestions.length < 3) {
       if (language === 'hi' || language === 'hi-Latn') {
         suggestions.push(`${record.title} के बारे में बताएं`);
+      } else if (language === 'pa') {
+        suggestions.push(`${record.title} ਬਾਰੇ ਦੱਸੋ`);
       } else {
         suggestions.push(`Tell me about ${record.title}`);
       }
     }
   }
 
-  // Fallbacks if not enough matches
+  // Fallbacks
   if (suggestions.length < 3) {
     if (language === 'hi' || language === 'hi-Latn') {
       const defaults = [
-        'PMFBY फसल बीमा में क्लेम कैसे करें?',
-        'KCC (किसान क्रेडिट कार्ड) लोन के नियम क्या हैं?',
-        'PACS समिति की सदस्यता कैसे लें?',
+        'मेरे लिए कौन सी सरकारी योजना सही है?',
+        'जाति प्रमाण पत्र कैसे बनवाएं?',
+        'PM-KISAN योजना की जानकारी दें',
+      ];
+      for (const d of defaults) {
+        if (!suggestions.includes(d) && suggestions.length < 3) suggestions.push(d);
+      }
+    } else if (language === 'pa') {
+      const defaults = [
+        'ਮੇਰੇ ਲਈ ਕਿਹੜੀਆਂ ਸਕੀਮਾਂ ਹਨ?',
+        'ਜਾਤੀ ਸਰਟੀਫਿਕੇਟ ਕਿਵੇਂ ਬਣਵਾਈਏ?',
+        'PM-KISAN ਯੋਜਨਾ ਬਾਰੇ ਦੱਸੋ',
       ];
       for (const d of defaults) {
         if (!suggestions.includes(d) && suggestions.length < 3) suggestions.push(d);
       }
     } else {
       const defaults = [
-        'How to apply for PMFBY crop insurance claim?',
-        'What are the eligibility criteria for KCC loans?',
-        'What services does a PACS cooperative provide?',
+        'Find government schemes for me',
+        'How to get a caste certificate?',
+        'What benefits can I get from PM-KISAN?',
       ];
       for (const d of defaults) {
         if (!suggestions.includes(d) && suggestions.length < 3) suggestions.push(d);

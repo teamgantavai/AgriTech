@@ -1,27 +1,21 @@
 // ============================================================
-// VoiceAssistantApp — Clean White Voice Assistant (Zero Gradients)
+// VoiceAssistantApp — Gram Sathi: Chat + Voice + Crop Calendar
 // Full 14-Language Support & Mobile-First Responsive Design
 // ============================================================
-
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { VoiceState } from '../types/voice';
 import { useGeminiLive } from '../hooks/useGeminiLive';
 import { VoicePanel } from './VoicePanel/VoicePanel';
 import { DebugPanel } from './DebugPanel/DebugPanel';
 import { AnimatedGlobe } from './AudioVisualizer/AnimatedGlobe';
-import { SUPPORTED_LANGUAGES, type SupportedLanguage, setFarmerContext } from '../services/sessionManager';
+import { SUPPORTED_LANGUAGES, type SupportedLanguage, setFarmerContext, setActiveServiceContext } from '../services/sessionManager';
 import { VOICE_TOOL_EVENT, type VoiceToolEvent, updateActiveFarmerContext } from '../services/toolManager';
 import { prefetchToken } from '../services/tokenService';
 import { CropCalendar } from './crop-calendar/CropCalendar';
+import { ChatAssistant } from './ChatAssistant/ChatAssistant';
 
-const CATEGORY_TAGS = [
-  { id: 'pmkisan', label: '🌾 PM-Kisan Samman', query: 'PM-Kisan installment and eKYC' },
-  { id: 'kusum', label: '⚡ Solar Pumps (KUSUM)', query: 'PM-KUSUM solar pump subsidy' },
-  { id: 'kcc', label: '💳 Kisan Credit Card', query: 'KCC loan limits and application' },
-  { id: 'pmfby', label: '🛡️ Crop Insurance (PMFBY)', query: 'PMFBY crop loss claim 72 hours' },
-  { id: 'subsidy', label: '🚜 Tractor Subsidy (SMAM)', query: 'Tractor and farm machinery subsidy' },
-  { id: 'pacs', label: '🏢 PACS & Cooperatives', query: 'PACS cooperative membership and benefits' },
-];
+// Simple example prompts for the voice landing — localized
 
 const LOCALIZED_SUGGESTIONS: Record<string, string[]> = {
   hi: [
@@ -80,13 +74,33 @@ const LOCALIZED_SUGGESTIONS: Record<string, string[]> = {
   ],
 };
 
-export function VoiceAssistantApp() {
-  const [activeTab, setActiveTab] = useState<'calendar' | 'schemes'>('calendar');
+interface VoiceAssistantAppProps {
+  defaultTab?: 'calendar' | 'schemes' | 'chat';
+}
+
+export function VoiceAssistantApp({ defaultTab = 'chat' }: VoiceAssistantAppProps) {
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+
+  const [activeTab, setActiveTab] = useState<'calendar' | 'schemes' | 'chat'>(() => {
+    if (location.pathname === '/voice' || searchParams.get('start') === 'true') return 'schemes';
+    if (location.pathname === '/calendar') return 'calendar';
+    if (location.pathname === '/chat') return 'chat';
+    return defaultTab;
+  });
   const [panelOpen, setPanelOpen] = useState(false);
   const [analyserData, setAnalyserData] = useState<Uint8Array | null>(null);
   const [micRms, setMicRms] = useState(0);
   const [toolNotification, setToolNotification] = useState<string | null>(null);
   const toolNotifTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoStartHandledRef = useRef(false);
+
+  // Synchronize tab state with router URL for browser back/forward
+  useEffect(() => {
+    if (location.pathname === '/voice') setActiveTab('schemes');
+    else if (location.pathname === '/calendar') setActiveTab('calendar');
+    else if (location.pathname === '/chat' || (location.pathname === '/' && !searchParams.get('start'))) setActiveTab('chat');
+  }, [location.pathname, searchParams]);
 
   const {
     voiceState,
@@ -106,6 +120,23 @@ export function VoiceAssistantApp() {
     },
   });
 
+  // Auto-start voice if start=true query param or serviceContext passed
+  useEffect(() => {
+    const isVoiceStart = searchParams.get('start') === 'true' || location.pathname === '/voice';
+    const state = location.state as { serviceContext?: any; startVoice?: boolean } | null;
+
+    if (state?.serviceContext) {
+      setActiveServiceContext(state.serviceContext);
+    }
+
+    if ((isVoiceStart || state?.startVoice) && !autoStartHandledRef.current) {
+      autoStartHandledRef.current = true;
+      setActiveTab('schemes');
+      setPanelOpen(true);
+      connect();
+    }
+  }, [searchParams, location.pathname, location.state, connect]);
+
   // Handle tool events from toolManager
   useEffect(() => {
     const handler = (e: Event) => {
@@ -122,6 +153,7 @@ export function VoiceAssistantApp() {
           msg = `Opening page: ${args.page}`;
           if (args.page === 'calendar') setActiveTab('calendar');
           else if (args.page === 'schemes' || args.page === 'home') setActiveTab('schemes');
+          else if (args.page === 'chat') setActiveTab('chat');
           break;
         case 'cropCalendar':
           msg = `Checking crop calendar for ${args.state || ''}`;
@@ -147,7 +179,6 @@ export function VoiceAssistantApp() {
     prefetchToken();
   }, []);
 
-  // Determine current active language code
   const currentLangCode = profile.languageCode || 'hi';
   const currentPrompts = LOCALIZED_SUGGESTIONS[currentLangCode] || LOCALIZED_SUGGESTIONS['en'];
 
@@ -167,7 +198,6 @@ export function VoiceAssistantApp() {
       updateActiveFarmerContext(ctxUpdates);
       setFarmerContext(ctxUpdates);
 
-      // If user hasn't explicitly selected a language yet, inherit active calendar language (e.g. Hindi)
       if (!profile.selectedLanguage && !profile.language) {
         const langObj = SUPPORTED_LANGUAGES.find((l) => l.code === currentLangCode) || SUPPORTED_LANGUAGES[0];
         setLanguage(langObj);
@@ -189,59 +219,77 @@ export function VoiceAssistantApp() {
     await connect();
   }, [connect]);
 
+  // Switch to voice from chat
+  const handleSwitchToVoice = useCallback(() => {
+    setActiveTab('schemes');
+    handleStart();
+  }, [handleStart]);
+
   return (
-    <div className="min-h-screen bg-white text-neutral-900 flex flex-col items-center justify-between relative selection:bg-emerald-100">
-      {/* ── Top Header Navigation Bar ── */}
+    <div className="h-screen w-full bg-[#fafaf9] text-slate-900 flex flex-col overflow-hidden relative">
+      {/* ── ONE Clean Top Navigation ── */}
       {!panelOpen && (
-        <header className="w-full border-b border-neutral-200 bg-white/95 backdrop-blur sticky top-0 z-30 px-4 sm:px-8 py-3 flex items-center justify-between flex-wrap gap-3">
+        <header className="w-full border-b border-slate-200 bg-white z-30 px-4 sm:px-6 py-2.5 flex items-center justify-between flex-shrink-0">
+          {/* Brand */}
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-full bg-emerald-100 flex items-center justify-center text-lg">
-              🌾
+            <div className="w-8 h-8 rounded-xl bg-green-600 flex items-center justify-center text-sm shadow-xs">
+              🏛️
             </div>
-            <div className="flex flex-col">
-              <span className="text-sm sm:text-base font-bold text-neutral-900 leading-tight">
-                Sahkar Sathi · सहकार साथी
-              </span>
-              <span className="text-[11px] text-emerald-600 font-semibold">
-                {currentLangCode === 'hi'
-                  ? 'भारत सरकार UPAg फसल कैलेंडर एवं कृषि AI'
-                  : 'Govt of India UPAg Crop Calendar & Agri-AI'}
-              </span>
+            <div>
+              <div className="text-base font-bold text-slate-900 leading-tight">Gram Sathi</div>
+              <div className="text-[11px] text-slate-500 hidden sm:block">
+                {currentLangCode === 'hi' ? 'सरकारी सेवाएं सहायक' : 'Government Services AI'}
+              </div>
             </div>
           </div>
 
-          {/* Feature Switcher Tabs */}
-          <nav className="flex items-center bg-neutral-100 p-1 rounded-xl border border-neutral-200">
+          {/* Tab switcher: Calendar | Chat | Voice */}
+          <nav className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
             <button
               type="button"
-              onClick={() => setActiveTab('calendar')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeTab === 'calendar'
-                  ? 'bg-white text-emerald-800 shadow-sm'
-                  : 'text-neutral-600 hover:text-neutral-900'
+              onClick={() => {
+                setActiveTab('calendar');
+                if (location.pathname !== '/calendar') window.history.replaceState({}, '', '/calendar');
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'calendar' ? 'bg-white text-green-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <span>🌾</span>
-              <span>{currentLangCode === 'hi' ? 'फसल कैलेंडर' : 'Crop Calendar'}</span>
+              <span className="hidden sm:inline">{currentLangCode === 'hi' ? 'फसल कैलेंडर' : 'Calendar'}</span>
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab('schemes')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeTab === 'schemes'
-                  ? 'bg-white text-emerald-800 shadow-sm'
-                  : 'text-neutral-600 hover:text-neutral-900'
+              onClick={() => {
+                setActiveTab('chat');
+                if (location.pathname !== '/chat') window.history.replaceState({}, '', '/chat');
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'chat' ? 'bg-white text-green-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <span>🏛️</span>
-              <span>{currentLangCode === 'hi' ? 'सरकारी योजनाएं' : 'Schemes & Voice'}</span>
+              <span>💬</span>
+              <span className="hidden sm:inline">{currentLangCode === 'hi' ? 'AI चैट' : 'Chat'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('schemes');
+                if (location.pathname !== '/voice') window.history.replaceState({}, '', '/voice');
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'schemes' ? 'bg-white text-green-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>🎙️</span>
+              <span className="hidden sm:inline">Voice</span>
             </button>
           </nav>
         </header>
       )}
 
       {/* ── Active Voice Talking Screen ── */}
-      {panelOpen ? (
+      {panelOpen && (
         <main className="w-full flex-1 flex flex-col items-center justify-center animate-fade-up">
           <VoicePanel
             voiceState={voiceState}
@@ -257,156 +305,128 @@ export function VoiceAssistantApp() {
             onLanguageChange={setLanguage}
           />
         </main>
-      ) : activeTab === 'calendar' ? (
-        /* ── 🌾 Farmer Crop Calendar View ── */
-        <main className="w-full flex-1 py-4 sm:py-6">
-          <CropCalendar
-            onOpenVoiceAssistant={handleOpenVoiceWithCrop}
-            isHindi={currentLangCode === 'hi'}
-            languageCode={currentLangCode}
-          />
-        </main>
-      ) : (
-        /* ── Minimalist White Landing Page (Zero Gradients, High-Def Typography) ── */
-        <div className="w-full max-w-2xl mx-auto px-4 sm:px-6 py-6 sm:py-8 flex flex-col items-center text-center gap-6 sm:gap-7 animate-fade-up my-auto">
-          {/* Top Brand Tag */}
-          <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-neutral-100 border border-neutral-200">
-            <span className="text-base">🌾</span>
-            <span className="text-xs font-semibold text-neutral-800 tracking-wide">
-              Sahkar Sathi · सहकार साथी
-            </span>
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          </div>
+      )}
+
+      {/* ── 🌾 Farmer Crop Calendar View ── */}
+      <main
+        className={`w-full flex-1 min-h-0 overflow-y-auto py-4 sm:py-6 ${
+          panelOpen || activeTab !== 'calendar' ? 'hidden' : ''
+        }`}
+      >
+        <CropCalendar
+          onOpenVoiceAssistant={handleOpenVoiceWithCrop}
+          isHindi={currentLangCode === 'hi'}
+          languageCode={currentLangCode}
+        />
+      </main>
+
+      {/* ── 💬 Gram Sathi AI Chat (Preserved across tab switches) ── */}
+      <main
+        className={`w-full flex-1 min-h-0 overflow-hidden flex flex-col ${
+          panelOpen || activeTab !== 'chat' ? 'hidden' : ''
+        }`}
+      >
+        <ChatAssistant onSwitchToVoice={handleSwitchToVoice} />
+      </main>
+
+      {/* ── 🎙️ Voice Landing — Simple & Friendly ── */}
+      {!panelOpen && activeTab === 'schemes' && (
+        <main className="w-full flex-1 min-h-0 overflow-y-auto">
+          <div className="w-full max-w-lg mx-auto px-4 sm:px-6 py-8 sm:py-12 flex flex-col items-center text-center gap-8 my-auto">
 
           {/* Heading */}
-          <div className="space-y-2.5 max-w-xl">
-            <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-neutral-900 tracking-tight leading-tight">
-              AI Voice Companion for Agriculture
+          <div>
+            <div className="text-5xl mb-4">🎙️</div>
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-800 mb-2 leading-tight">
+              Talk to Gram Sathi
             </h1>
-            <p className="text-neutral-500 text-sm sm:text-base max-w-md mx-auto leading-relaxed">
-              Real-time spoken answers for government farming schemes, subsidies, crop insurance, and cooperatives in 14 Indian languages.
+            <p className="text-slate-500 text-sm sm:text-base leading-relaxed">
+              Tap below and ask about government schemes, loans, certificates or any service — in your language.
             </p>
           </div>
 
-          {/* ── 14-Language Selector Ribbon ── */}
+          {/* Globe + Tap CTA */}
+          <div className="flex flex-col items-center gap-4">
+            <button
+              id="start-voice-analysis-btn"
+              onClick={handleStart}
+              className="cursor-pointer group flex flex-col items-center gap-3 focus:outline-none"
+              aria-label="Tap to talk"
+            >
+              <AnimatedGlobe
+                isActive={false}
+                isSpeaking={false}
+                size={200}
+                className="group-hover:scale-105 transition-transform duration-300"
+              />
+              <span className="text-sm font-semibold text-slate-500 group-hover:text-green-700 transition-colors">
+                Tap to start talking
+              </span>
+            </button>
+          </div>
+
+          {/* Or use Chat */}
+          <div className="flex flex-col items-center gap-2">
+            <span className="text-xs text-slate-400">Prefer typing? Use the chat instead.</span>
+            <button
+              onClick={() => setActiveTab('chat')}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-full border-2 border-green-600 text-green-700 font-semibold text-sm hover:bg-green-50 transition-all cursor-pointer active:scale-95"
+            >
+              <span>💬</span>
+              <span>Open AI Chat</span>
+            </button>
+          </div>
+
+          {/* Language selector */}
           <div className="w-full">
-            <div className="flex items-center justify-between px-1 mb-2">
-              <span className="text-xs font-bold text-neutral-500 tracking-wide flex items-center gap-1.5">
-                <span>🌐</span> SELECT YOUR LANGUAGE:
-              </span>
-              <span className="text-[11px] text-neutral-400 font-medium">
-                {profile.language ? `Selected: ${profile.language}` : 'Auto-Detect Active'}
-              </span>
-            </div>
-            <div className="flex flex-wrap justify-center gap-1.5 p-2 bg-neutral-50 rounded-2xl border border-neutral-200 max-h-32 sm:max-h-none overflow-y-auto">
-              {/* Auto-detect button */}
+            <p className="text-xs text-slate-400 mb-2">
+              🌐 {profile.language ? `Speaking in: ${profile.language}` : 'Language auto-detected from your speech'}
+            </p>
+            <div className="flex flex-wrap justify-center gap-1.5">
               <button
                 onClick={() => setLanguage(null)}
-                className={`px-3 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer ${
-                  !profile.language
-                    ? 'bg-neutral-900 text-white shadow-sm'
-                    : 'bg-white text-neutral-700 hover:bg-neutral-100 border border-neutral-200'
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer border ${
+                  !profile.language ? 'bg-green-600 text-white border-green-600' : 'bg-white text-slate-600 border-slate-200 hover:border-green-300'
                 }`}
               >
-                ✨ Auto-Detect
+                Auto
               </button>
-
-              {/* 14 supported language pills */}
               {SUPPORTED_LANGUAGES.map((lang) => {
-                const isSelected =
-                  profile.language === lang.name || profile.languageCode === lang.code;
+                const isSelected = profile.language === lang.name || profile.languageCode === lang.code;
                 return (
                   <button
                     key={lang.code}
                     onClick={() => setLanguage(lang)}
-                    className={`px-3 py-1 rounded-full text-xs transition-all cursor-pointer flex items-center gap-1 ${
-                      isSelected
-                        ? 'bg-neutral-900 text-white font-bold shadow-sm'
-                        : 'bg-white text-neutral-700 hover:bg-neutral-100 border border-neutral-200 font-medium'
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer border ${
+                      isSelected ? 'bg-green-600 text-white border-green-600' : 'bg-white text-slate-600 border-slate-200 hover:border-green-300'
                     }`}
-                    title={`${lang.name} (${lang.nativeName})`}
                   >
-                    <span>{lang.nativeName}</span>
-                    <span className={`text-[10px] ${isSelected ? 'text-neutral-300' : 'text-neutral-400'}`}>
-                      {lang.code.toUpperCase()}
-                    </span>
+                    {lang.nativeName}
                   </button>
                 );
               })}
             </div>
           </div>
 
-          {/* Interactive Animated Globe Preview */}
-          <button
-            onClick={handleStart}
-            className="cursor-pointer group relative flex flex-col items-center justify-center p-2 rounded-full focus:outline-none"
-            aria-label="Tap to talk"
-          >
-            <AnimatedGlobe
-              isActive={false}
-              isSpeaking={false}
-              size={210}
-              className="group-hover:scale-105 transition-transform duration-300"
-            />
-            <span className="mt-2 text-xs font-semibold text-neutral-400 group-hover:text-neutral-700 transition-colors duration-150">
-              Tap globe to start talking
-            </span>
-          </button>
-
-          {/* Scheme Category Badges */}
-          <div className="flex flex-wrap justify-center gap-1.5 max-w-lg">
-            {CATEGORY_TAGS.map((cat) => (
-              <button
-                key={cat.id}
-                onClick={handleStart}
-                className="voice-pill hover:border-neutral-400 active:scale-95 cursor-pointer text-xs"
-                title={`Ask about ${cat.label}`}
-              >
-                {cat.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Primary CTA Button */}
-          <div className="flex flex-col items-center gap-2 pt-1">
-            <button
-              id="start-voice-analysis-btn"
-              onClick={handleStart}
-              className="flex items-center gap-3 px-8 py-3.5 rounded-full bg-neutral-900 hover:bg-neutral-800 active:scale-95 text-white font-semibold text-base shadow-md hover:shadow-lg transition-all duration-150 cursor-pointer"
-            >
-              <span className="w-3 h-3 rounded-full bg-rose-400 animate-pulse" />
-              <span>Start Voice Analysis</span>
-            </button>
-            <p className="text-neutral-400 text-xs">
-              Direct real-time speech via Google Gemini Live Multimodal Audio
-            </p>
-          </div>
-
-          {/* Localized Prompt Suggestions */}
-          <div className="w-full pt-2">
-            <div className="flex items-center justify-between mb-2 px-1">
-              <p className="text-xs font-bold text-neutral-400 tracking-wide">
-                TOP QUESTIONS TO ASK:
-              </p>
-              <span className="text-[11px] text-neutral-400">
-                1-tap to start
-              </span>
-            </div>
+          {/* Sample questions */}
+          <div className="w-full">
+            <p className="text-xs font-semibold text-slate-400 mb-3">Try saying:</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-left">
               {currentPrompts.map((prompt) => (
                 <button
                   key={prompt}
                   onClick={handleStart}
-                  className="p-3 rounded-xl bg-neutral-50 hover:bg-neutral-100 active:bg-neutral-200 border border-neutral-200 text-neutral-800 text-xs font-medium transition-all text-left flex items-center justify-between cursor-pointer"
+                  className="p-3 rounded-xl bg-white border border-slate-200 hover:border-green-300 hover:bg-green-50 text-slate-700 text-xs font-medium transition-all text-left flex items-center justify-between cursor-pointer"
                 >
                   <span className="pr-2">{prompt}</span>
-                  <span className="text-neutral-400 text-xs font-bold">→</span>
+                  <span className="text-slate-400">→</span>
                 </button>
               ))}
             </div>
           </div>
         </div>
-      )}
+      </main>
+    )}
 
       {/* ── Tool notification toast ── */}
       {toolNotification && (
@@ -421,11 +441,11 @@ export function VoiceAssistantApp() {
       {/* ── Debug Panel (Ctrl+Shift+D) ── */}
       <DebugPanel metrics={metrics} voiceState={voiceState} />
 
-      {/* ── Minimalist White Footer ── */}
-      {!panelOpen && (
-        <footer className="w-full py-4 text-center border-t border-neutral-100 bg-white">
-          <p className="text-neutral-400 text-xs tracking-tight">
-            हिन्दी · ਪੰਜਾਬੀ · English · मराठी · বাংলা · ગુજરાતી · తెలుగు · தமிழ் · ಕನ್ನಡ · മലയാളം · ଓଡ଼ିଆ · অসমীয়া · اردو · Hinglish
+      {/* ── Footer ── */}
+      {!panelOpen && activeTab !== 'chat' && (
+        <footer className="w-full py-3 text-center border-t border-slate-100 bg-white">
+          <p className="text-slate-400 text-xs">
+            🔒 Gram Sathi never asks for OTP, Aadhaar number or passwords.
           </p>
         </footer>
       )}

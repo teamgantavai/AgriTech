@@ -125,12 +125,13 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
     clearProcessingWatchdog();
 
     console.log(`[TURN ${turnNumberRef.current}] audio playback complete`);
-    console.log(`[TURN ${turnNumberRef.current}] microphone unlocked`);
+    console.log(`[TURN ${turnNumberRef.current}] microphone unlocked & unmuted`);
 
     userInputLockedRef.current = false;
     updateMetric('userInputLocked', false);
 
-    // Cleanly purge any energy/silence timers accumulated during speaking
+    // Physically unmute microphone hardware tracks and reset VAD
+    micRef.current?.unmute?.();
     micRef.current?.resetVAD();
 
     if (onboardingStateRef.current === OnboardingState.LANGUAGE_QUESTION) {
@@ -254,6 +255,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
 
       // 4. Ensure microphone is healthy & reset VAD
       micRef.current?.ensureHealthyTrack();
+      micRef.current?.unmute?.();
       micRef.current?.resetVAD();
 
       // 5. Check session health
@@ -283,11 +285,12 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
   const playback = useAudioPlayback({
     onPlaybackStart: () => {
       clearProcessingWatchdog();
-      // Lock user input during playback
+      // Physically mute mic and lock user input during playback
       userInputLockedRef.current = true;
       updateMetric('userInputLocked', true);
+      micRef.current?.mute?.();
       updateState(VoiceState.AI_SPEAKING);
-      console.log(`[TURN ${turnNumberRef.current}] audio playback started`);
+      console.log(`[TURN ${turnNumberRef.current}] audio playback started, mic muted`);
       console.log('[STATE] AI_SPEAKING');
     },
     onPlaybackComplete: () => {
@@ -571,7 +574,8 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
               if (!userInputLockedRef.current) {
                 userInputLockedRef.current = true;
                 updateMetric('userInputLocked', true);
-                console.log('[INPUT] microphone locked');
+                micRef.current?.mute?.();
+                console.log('[INPUT] microphone locked & physically muted');
               }
               playback.enqueueChunk(
                 pcm,

@@ -121,8 +121,11 @@ export function useMicrophone(options: MicrophoneOptions) {
         if (!isActiveRef.current) return;
         const { samples } = event.data as { samples: Float32Array };
 
-        // If input is locked (AI speaking or processing), discard audio and pause VAD
-        if (optionsRef.current.isInputLocked?.()) {
+        // If input is locked (AI speaking or processing) or track is muted, discard audio and pause VAD
+        if (
+          optionsRef.current.isInputLocked?.() ||
+          streamRef.current?.getAudioTracks().some((t) => !t.enabled)
+        ) {
           accumulatedSamples = [];
           accumulatedLength = 0;
           return;
@@ -214,6 +217,29 @@ export function useMicrophone(options: MicrophoneOptions) {
     audioCtxRef.current = null;
   }, [vad]);
 
+  const mute = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getAudioTracks().forEach((track) => {
+        track.enabled = false;
+      });
+    }
+    vad.reset();
+  }, [vad]);
+
+  const unmute = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getAudioTracks().forEach((track) => {
+        track.enabled = true;
+      });
+    }
+    vad.reset();
+  }, [vad]);
+
+  const isMuted = useCallback(() => {
+    if (!streamRef.current) return true;
+    return streamRef.current.getAudioTracks().every((track) => !track.enabled);
+  }, []);
+
   const getVADState = useCallback(() => vad.getState(), [vad]);
 
   const resetVAD = useCallback(() => {
@@ -227,8 +253,9 @@ export function useMicrophone(options: MicrophoneOptions) {
       trackReadyState: (track?.readyState ?? 'none') as 'live' | 'ended' | 'muted' | 'none',
       audioContextState: (audioCtxRef.current?.state ?? 'closed') as 'running' | 'suspended' | 'closed',
       isActive: isActiveRef.current,
+      isMuted: isMuted(),
     };
-  }, []);
+  }, [isMuted]);
 
   const ensureHealthyTrack = useCallback(async (): Promise<boolean> => {
     if (!isActiveRef.current) return false;
@@ -262,5 +289,5 @@ export function useMicrophone(options: MicrophoneOptions) {
     return true;
   }, []);
 
-  return { start, stop, getVADState, resetVAD, getDiagnostics, ensureHealthyTrack };
+  return { start, stop, mute, unmute, isMuted, getVADState, resetVAD, getDiagnostics, ensureHealthyTrack };
 }

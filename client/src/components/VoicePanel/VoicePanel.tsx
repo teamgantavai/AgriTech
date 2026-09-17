@@ -24,15 +24,15 @@ interface VoicePanelProps {
   onLanguageChange?: (lang: SupportedLanguage | null) => void;
 }
 
-const STATE_LABEL: Record<VoiceState, string> = {
-  [VoiceState.IDLE]: 'Ready',
+const STATE_LABEL: Record<string, string> = {
+  [VoiceState.IDLE]: 'Your turn — speak now',
   [VoiceState.PREPARING]: 'Preparing voice...',
   [VoiceState.CONNECTING]: 'Connecting...',
-  [VoiceState.READY]: 'Ready',
-  [VoiceState.LISTENING]: 'Listening...',
-  [VoiceState.PROCESSING]: 'Thinking...',
-  [VoiceState.AI_SPEAKING]: 'AI is speaking...',
-  [VoiceState.RECOVERING]: 'Reconnecting...',
+  [VoiceState.READY]: 'Your turn — speak now',
+  [VoiceState.LISTENING]: 'Your turn — speak now',
+  [VoiceState.PROCESSING]: 'One moment...',
+  [VoiceState.AI_SPEAKING]: 'Gram Sathi is speaking...',
+  [VoiceState.RECOVERING]: 'One moment...',
   [VoiceState.ERROR]: 'Voice connection problem',
   [VoiceState.DISCONNECTED]: 'Disconnected',
 };
@@ -41,33 +41,33 @@ function getLocalizedStateLabel(state: VoiceState, langCode?: string): string {
   const code = langCode || 'hi';
   switch (state) {
     case VoiceState.AI_SPEAKING:
-      if (code === 'en') return 'Sahkar Sathi is speaking...';
-      if (code === 'pa') return 'ਸਹਕਾਰ ਸਾਥੀ ਬੋਲ ਰਿਹਾ ਹੈ...';
-      if (code === 'mr') return 'सहकार साथी बोलत आहे...';
-      if (code === 'gu') return 'સહકાર સાથી બોલી રહ્યા છે...';
-      if (code === 'bn') return 'সহকার সাথী কথা বলছে...';
-      if (code === 'te') return 'సహకార్ సాథీ మాట్లాడుతున్నారు...';
-      if (code === 'ta') return 'சகார் சாதி பேசுகிறார்...';
-      if (code === 'kn') return 'ಸಹಕಾರ ಸಾಥಿ ಮಾತನಾಡುತ್ತಿದ್ದಾರೆ...';
-      if (code === 'ml') return 'സഹകാർ സാഥി സംസാരിക്കുന്നു...';
-      return 'सहकार साथी बोल रहा है...';
+      if (code === 'en') return 'Gram Sathi is speaking...';
+      if (code === 'pa') return 'ਗ੍ਰਾਮ ਸਾਥੀ ਬੋਲ ਰਿਹਾ ਹੈ...';
+      if (code === 'mr') return 'ग्राम साथी बोलत आहे...';
+      if (code === 'gu') return 'ગ્રામ સાથી બોલી રહ્યા છે...';
+      if (code === 'bn') return 'গ্রাম সাথী কথা বলছে...';
+      if (code === 'te') return 'గ్రామ్ సాథీ మాట్లాడుతున్నారు...';
+      if (code === 'ta') return 'கிராம் சாதி பேசுகிறார்...';
+      if (code === 'kn') return 'ಗ್ರಾಮ ಸಾಥಿ ಮಾತನಾಡುತ್ತಿದ್ದಾರೆ...';
+      if (code === 'ml') return 'ഗ്രാം സാഥി സംസാരിക്കുന്നു...';
+      return 'ग्राम साथी बोल रहा है...';
     case VoiceState.LISTENING:
     case VoiceState.READY_FOR_USER:
-      if (code === 'en') return 'Listening...';
-      if (code === 'pa') return 'ਸੁਣ ਰਿਹਾ ਹਾਂ...';
-      if (code === 'mr') return 'ऐकत आहे...';
-      if (code === 'gu') return 'સાંભળી રહ્યો છું...';
-      if (code === 'bn') return 'শুনছি...';
-      if (code === 'te') return 'వింటున్నాను...';
-      if (code === 'ta') return 'கேட்கிறேன்...';
-      if (code === 'kn') return 'ಕೇಳಿಸಿಕೊಳ್ಳುತ್ತಿದ್ದೇನೆ...';
-      if (code === 'ml') return 'കേൾക്കുന്നു...';
-      return 'सुन रहा हूँ...';
+      if (code === 'en') return 'Your turn — speak now';
+      if (code === 'pa') return 'ਤੁਹਾਡੀ ਵਾਰੀ — ਹੁਣ ਬੋਲੋ';
+      if (code === 'mr') return 'तुमची पाळी — आता बोला';
+      if (code === 'gu') return 'તમારો વારો — હવે બોલો';
+      if (code === 'bn') return 'আপনার পালা — এবার বলুন';
+      if (code === 'te') return 'మీ వంతు — ఇప్పుడు మాట్లాడండి';
+      if (code === 'ta') return 'உங்கள் முறை — இப்போது பேசுங்கள்';
+      if (code === 'kn') return 'ನಿಮ್ಮ ಸರದಿ — ಈಗ ಮಾತನಾಡಿ';
+      if (code === 'ml') return 'നിങ്ങളുടെ ഊഴം — ഇപ്പോൾ സംസാരിക്കൂ';
+      return 'आपकी बारी — अब बोलें';
     case VoiceState.PROCESSING:
-      if (code === 'en') return 'Thinking...';
-      if (code === 'pa') return 'ਸੋਚ ਰਿਹਾ ਹਾਂ...';
-      if (code === 'mr') return 'विचार करत आहे...';
-      return 'सोच रहा हूँ...';
+      if (code === 'en') return 'One moment...';
+      if (code === 'pa') return 'ਇੱਕ ਪਲ...';
+      if (code === 'mr') return 'एक क्षण...';
+      return 'एक पल...';
     case VoiceState.PREPARING:
       return 'Preparing voice...';
     case VoiceState.CONNECTING:
@@ -77,9 +77,9 @@ function getLocalizedStateLabel(state: VoiceState, langCode?: string): string {
       return 'Voice connection problem';
     case VoiceState.IDLE:
     case VoiceState.READY:
-      return 'Ready';
+      return 'Your turn — speak now';
     default:
-      return STATE_LABEL[state] || 'Ready';
+      return STATE_LABEL[state] || 'Your turn — speak now';
   }
 }
 
@@ -204,7 +204,7 @@ export function VoicePanel({
         {/* Center Title + Language Switcher Chip */}
         <div className="flex flex-col items-center">
           <h1 className="text-lg sm:text-xl font-bold text-neutral-900 tracking-tight leading-tight">
-            Voice Analysis
+            Gram Sathi
           </h1>
           <button
             onClick={() => setShowLangModal(true)}
@@ -300,13 +300,13 @@ export function VoicePanel({
             )}
           </button>
 
-          {/* Main Microphone Button with Coral/Pink Ring (Matching Reference Photo) */}
+          {/* Main Microphone Button with Coral/Pink Ring */}
           <div className="relative flex items-center justify-center">
             {/* Soft Coral/Pink Outer Halo Ring */}
             <div
               className={`
-                w-18 h-18 sm:w-20 sm:h-20 rounded-full bg-[#fca5a5]/80 flex items-center justify-center transition-all duration-300
-                ${isListening && !isPaused ? 'mic-halo-active' : ''}
+                w-18 h-18 sm:w-20 sm:h-20 rounded-full flex items-center justify-center transition-all duration-300
+                ${isListening && !isPaused ? 'bg-[#fca5a5]/80 mic-halo-active' : isSpeaking ? 'bg-slate-200/60 opacity-60' : 'bg-slate-200/50'}
               `}
               style={{
                 boxShadow: isListening && !isPaused ? '0 0 24px rgba(251, 113, 133, 0.4)' : 'none',
@@ -314,12 +314,22 @@ export function VoicePanel({
             >
               {/* Inner Dark Circular Button */}
               <button
-                onClick={isError && onRetry ? onRetry : onStop}
-                aria-label={isError ? 'Retry connection' : 'Stop voice session'}
-                className="w-13 h-13 sm:w-14 sm:h-14 rounded-full bg-[#18181b] hover:bg-neutral-800 active:scale-95 text-white flex items-center justify-center shadow-md transition-all duration-150 cursor-pointer"
+                onClick={isSpeaking ? undefined : (isError && onRetry ? onRetry : onStop)}
+                disabled={isSpeaking}
+                aria-label={isSpeaking ? 'Gram Sathi is speaking...' : isError ? 'Retry connection' : 'Stop voice session'}
+                className={`w-13 h-13 sm:w-14 sm:h-14 rounded-full flex items-center justify-center shadow-md transition-all duration-150 ${
+                  isSpeaking
+                    ? 'bg-slate-400 text-slate-200 cursor-not-allowed opacity-70 scale-95'
+                    : 'bg-[#18181b] hover:bg-neutral-800 active:scale-95 text-white cursor-pointer'
+                }`}
+                title={isSpeaking ? 'Gram Sathi is speaking...' : 'Stop voice session'}
               >
                 {isError ? (
                   <span className="text-lg font-bold">↻</span>
+                ) : isSpeaking ? (
+                  <svg className="w-5 h-5 sm:w-6 sm:h-6 fill-current animate-pulse" viewBox="0 0 24 24">
+                    <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+                  </svg>
                 ) : (
                   <svg className="w-5 h-5 sm:w-6 sm:h-6 fill-current" viewBox="0 0 24 24">
                     <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />

@@ -7,14 +7,30 @@
 
 @layer base {
   :root {
-    --brand-primary: #15803d;
+    /* Legacy */
+    --brand-primary: #16a34a;
     --brand-light: #f0fdf4;
-    --text-primary: #111827;
-    --text-secondary: #6b7280;
-    --border-color: #e5e7eb;
+    --text-primary: #1e293b;
+    --text-secondary: #64748b;
+    --border-color: #e2e8f0;
     --bg-surface: #ffffff;
-    --bg-subtle: #f9fafb;
+    --bg-subtle: #fafaf9;
+
+    /* Gram Sathi design system */
+    --gs-navy:       #1e293b;
+    --gs-green:      #16a34a;
+    --gs-green-dark: #15803d;
+    --gs-green-mid:  #22c55e;
+    --gs-green-light:#f0fdf4;
+    --gs-green-border:#bbf7d0;
+    --gs-warm-bg:    #fafaf9;
+    --gs-surface:    #ffffff;
+    --gs-muted:      #94a3b8;
+    --gs-border:     #e2e8f0;
+    --gs-text:       #334155;
+    --gs-text-soft:  #64748b;
   }
+
 
   * {
     box-sizing: border-box;
@@ -329,5 +345,18 @@
     from { opacity: 0; transform: translateY(12px); }
     to   { opacity: 1; transform: translateY(0); }
   }
-}
 
+  /* ── Chat Streaming Cursor ── */
+  .animate-chat-cursor {
+    animation: chatCursorBlink 0.9s ease-in-out infinite;
+  }
+  @keyframes chatCursorBlink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  /* ── Chat Layout ── */
+  .chat-full-height {
+    height: calc(100vh - 65px);
+  }
+}
