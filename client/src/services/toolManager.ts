@@ -116,14 +116,59 @@ export async function executeToolCall(
         return { id, result: { success: true, schemeId } };
       }
 
+      case 'searchInternet': {
+        const query = String(args.query || '');
+        dispatchToolEvent('searchInternet', { query });
+        const resp = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+        if (resp.ok) {
+          const data = await resp.json();
+          return {
+            id,
+            result: {
+              success: true,
+              query: data.query || query,
+              summary: data.summary,
+              results: data.results || [],
+              sources: data.sources || [],
+            },
+          };
+        }
+        return {
+          id,
+          result: {
+            success: false,
+            error: 'Internet search is temporarily unavailable. Please check scholarships.gov.in or myscheme.gov.in.',
+          },
+        };
+      }
+
       case 'searchScheme': {
         const query = String(args.query || '');
         dispatchToolEvent('searchScheme', { query });
-        // Also call backend for results
-        const resp = await fetch(`/api/schemes/search?q=${encodeURIComponent(query)}&limit=3`);
+        // Call backend dedicated search endpoint
+        const resp = await fetch(`/api/schemes/search?q=${encodeURIComponent(query)}&limit=4`);
         if (resp.ok) {
           const data = await resp.json();
-          return { id, result: { success: true, results: data.results || [] } };
+          const list = data.results || [];
+          if (list.length > 0) {
+            const summary = list.map((s: any) => `${s.title}: ${s.description || ''}`).join(' | ');
+            return { id, result: { success: true, summary, results: list } };
+          }
+        }
+        // Fallback: search internet if local scheme database has no direct match
+        const searchResp = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+        if (searchResp.ok) {
+          const searchData = await searchResp.json();
+          return {
+            id,
+            result: {
+              success: true,
+              summary: searchData.summary,
+              results: searchData.results || [],
+              sources: searchData.sources || [],
+              fromInternet: true,
+            },
+          };
         }
         return { id, result: { success: true, results: [] } };
       }
@@ -140,12 +185,12 @@ export async function executeToolCall(
         if (resp.ok) {
           const data = await resp.json();
           // Return a concise summary for the AI to read aloud
-          const scheme = data.scheme;
+          const scheme = data.scheme || data;
           const summary = scheme
-            ? `${scheme.title}: ${scheme.sections?.about?.slice(0, 300) || 'Details available.'}`
+            ? `${scheme.title}: ${scheme.sections?.about?.slice(0, 300) || scheme.answer || 'Details available.'}`
             : 'Scheme details not found.';
           dispatchToolEvent('getSchemeDetails', { schemeId });
-          return { id, result: { success: true, summary, schemeId } };
+          return { id, result: { success: true, summary, schemeId, scheme } };
         }
         return { id, result: { success: false, error: 'Scheme not found' } };
       }
@@ -193,14 +238,14 @@ export const VOICE_TOOLS: GeminiTool[] = [
       {
         name: 'navigateToScheme',
         description:
-          'Navigate the user to a specific government scheme page. Use when user asks to open, view, or apply for a scheme like PM-KISAN, PMFBY, KCC, etc.',
+          'Navigate the user to a specific government scheme page. Use when user asks to open, view, or apply for a scheme like PM-KISAN, PMFBY, KCC, NSP Scholarships, MUDRA, SVANidhi, PMAY, Ayushman Bharat, etc.',
         parameters: {
           type: 'object',
           properties: {
             schemeId: {
               type: 'string',
               description:
-                'The scheme slug/ID. Examples: pm-kisan, pmfby, kcc, tractor-subsidy, pm-kusum, pm-vishwakarma, mudra, svanidhi',
+                'The scheme slug/ID. Examples: nsp-scholarship, scholarship, student, pm-kisan, pmfby, kcc, tractor-subsidy, pm-kusum, pm-vishwakarma, mudra, svanidhi, ayushman-bharat, pmay-housing',
             },
           },
           required: ['schemeId'],
@@ -209,13 +254,28 @@ export const VOICE_TOOLS: GeminiTool[] = [
       {
         name: 'searchScheme',
         description:
-          'Search for government schemes based on a query. Use when user wants to find schemes but is not specific about which one.',
+          'Search for government schemes, student scholarships, loans, education schemes, or citizen welfare programs based on a query. Use whenever the user asks to find schemes for students, farmers, youth, women, or businesses.',
         parameters: {
           type: 'object',
           properties: {
             query: {
               type: 'string',
-              description: 'The search query, e.g. "crop insurance for wheat", "loan for small business"',
+              description: 'The search query, e.g. "student scholarships", "college education loan", "crop insurance for wheat", "loan for small business"',
+            },
+          },
+          required: ['query'],
+        },
+      },
+      {
+        name: 'searchInternet',
+        description:
+          'Search the live internet in real-time for student scholarships, exams, college admission schemes, recent eligibility rules, official government portal links, or any question not in the local database. Always invoke this when the user asks about student services, exams, current dates, or asks to search the web.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'The search query to look up on the live internet, e.g. "scholarships for college students India 2025", "NSP scholarship eligibility", "PM Vidyalaxmi scheme education loan", "latest student welfare schemes"',
             },
           },
           required: ['query'],

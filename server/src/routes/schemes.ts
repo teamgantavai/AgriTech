@@ -27,6 +27,17 @@ const SCHEME_SLUG_MAP: Record<string, { topic: string; id: string }> = {
   'mudra': { topic: 'MUDRA', id: '903' },
   'pashu-kcc': { topic: 'PASHUKCC', id: '904' },
   'lakhpati-didi': { topic: 'LAKHPATI', id: '905' },
+  'nsp-scholarship': { topic: 'NSP Scholarships', id: 'nsp-scholarship' },
+  'scholarship': { topic: 'NSP Scholarships', id: 'nsp-scholarship' },
+  'student': { topic: 'NSP Scholarships', id: 'nsp-scholarship' },
+  'student-scholarship': { topic: 'NSP Scholarships', id: 'nsp-scholarship' },
+  'chhatravriti': { topic: 'NSP Scholarships', id: 'nsp-scholarship' },
+  'education-loan': { topic: 'Education Loan', id: 'education-loan' },
+  'pm-vidyalaxmi': { topic: 'PM Vidyalaxmi', id: 'pm-vidyalaxmi' },
+  'ayushman-bharat': { topic: 'Ayushman Bharat', id: 'ayushman-bharat' },
+  'pmay': { topic: 'PMAY Housing', id: 'pmay-housing' },
+  'pmegp': { topic: 'PMEGP', id: 'pmegp' },
+  'income-certificate': { topic: 'Income Certificate', id: 'income-certificate' },
 };
 
 export interface FormattedScheme {
@@ -505,29 +516,147 @@ schemesRouter.get('/', (req: Request, res: Response) => {
   });
 });
 
+// Helper to load curated services from disk
+function loadCuratedServices(): any[] {
+  const candidates = [
+    path.resolve(process.cwd(), '../data/services_hi.json'),
+    path.resolve(process.cwd(), 'data/services_hi.json'),
+    path.resolve(__dirname, '../../../data/services_hi.json'),
+  ];
+  for (const filePath of candidates) {
+    if (fs.existsSync(filePath)) {
+      try {
+        return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      } catch {
+        // ignore
+      }
+    }
+  }
+  return [];
+}
+
+function formatCuratedService(s: any): FormattedScheme {
+  return {
+    id: s.id,
+    slug: s.id,
+    topic: s.title,
+    title: s.title,
+    category: s.category || 'सरकारी सेवा',
+    question: `${s.title} क्या है और इसके क्या लाभ हैं?`,
+    answer: s.whatIsIt || s.helpsWith || '',
+    keywords: `${s.forWhom || ''} ${s.category || ''} ${s.helpsWith || ''}`,
+    source: s.source || 'भारत सरकार',
+    url: s.officialUrl || 'https://www.myscheme.gov.in',
+    sections: {
+      about: `${s.whatIsIt || ''} ${s.helpsWith ? 'मुख्य लाभ: ' + s.helpsWith : ''}`.trim(),
+      eligibility: s.whoCanGet || [],
+      benefits: s.whatYouGet || [],
+      applicationSteps: s.howToApply || [],
+      documents: s.whatPapers || [],
+      fees: 'निःशुल्क (Official Portal पर आवेदन)',
+      whereToApply: {
+        channel: s.source || 'आधिकारिक पोर्टल',
+        details: `ऑनलाइन पोर्टल (${s.officialUrl || 'https://www.myscheme.gov.in'}) या नजदीकी CSC केंद्र`,
+        portalUrl: s.officialUrl || 'https://www.myscheme.gov.in',
+      },
+      warnings: [
+        'अनधिकृत दलालों या बिचौलियों को पैसे न दें।',
+        'आवेदन केवल आधिकारिक सरकारी पोर्टल से करें।',
+      ],
+      links: [
+        { title: `${s.title} - आधिकारिक पोर्टल`, url: s.officialUrl || 'https://www.myscheme.gov.in' },
+        { title: 'myScheme सरकारी पोर्टल', url: 'https://www.myscheme.gov.in' },
+      ],
+    },
+  };
+}
+
 // GET /api/schemes/curated - Curated government services in Hindi (or English)
 schemesRouter.get('/curated', (req: Request, res: Response) => {
   const lang = ((req.query.lang as string) || 'hi').toLowerCase();
-  try {
-    const candidates = [
-      path.resolve(process.cwd(), '../data/services_hi.json'),
-      path.resolve(process.cwd(), 'data/services_hi.json'),
-      path.resolve(__dirname, '../../../data/services_hi.json'),
-    ];
-    for (const filePath of candidates) {
-      if (fs.existsSync(filePath)) {
-        const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-        return res.json({
-          language: 'hi',
-          total: data.length,
-          services: data,
+  const services = loadCuratedServices();
+  if (services.length > 0) {
+    return res.json({
+      language: lang,
+      total: services.length,
+      services,
+    });
+  }
+  return res.status(500).json({ error: 'Could not load Hindi services' });
+});
+
+// GET /api/schemes/search - Dedicated search endpoint for voice assistant and search UI
+schemesRouter.get('/search', (req: Request, res: Response) => {
+  const q = ((req.query.q as string) || (req.query.query as string) || '').toLowerCase().trim();
+  const limit = Math.min(20, Math.max(1, parseInt(req.query.limit as string) || 5));
+
+  if (!q) {
+    return res.json({ success: true, results: [] });
+  }
+
+  const results: any[] = [];
+  const addedIds = new Set<string>();
+
+  // 1. Search curated popular services first (NSP scholarships, MUDRA, SVANidhi, etc.)
+  const curated = loadCuratedServices();
+  for (const s of curated) {
+    const text = `${s.id || ''} ${s.title || ''} ${s.category || ''} ${s.forWhom || ''} ${s.helpsWith || ''} ${s.whatIsIt || ''}`.toLowerCase();
+    const isStudentQuery = q.includes('student') || q.includes('छात्र') || q.includes('scholarship') || q.includes('विद्यार्थी') || q.includes('पढ़ाई');
+    const matchesStudentService = s.id === 'nsp-scholarship' || text.includes('छात्र') || text.includes('scholarship');
+
+    if (text.includes(q) || (isStudentQuery && matchesStudentService)) {
+      if (!addedIds.has(s.id)) {
+        addedIds.add(s.id);
+        const formatted = formatCuratedService(s);
+        results.push({
+          id: formatted.id,
+          slug: formatted.slug,
+          title: formatted.title,
+          category: formatted.category,
+          description: formatted.sections.about,
+          benefits: formatted.sections.benefits,
+          eligibility: formatted.sections.eligibility,
+          url: formatted.url,
+          source: formatted.source,
+          scheme: formatted,
         });
       }
     }
-  } catch (err) {
-    console.error('Failed to read services_hi.json:', err);
   }
-  return res.status(500).json({ error: 'Could not load Hindi services' });
+
+  // 2. Search CSV knowledge base (870+ records)
+  const all = getAllRecords();
+  for (const r of all) {
+    if (results.length >= limit) break;
+    const text = `${r.title || ''} ${r.topic || ''} ${r.keywords || ''} ${r.answer || ''} ${r.category || ''}`.toLowerCase();
+    const rawId = (r['\ufeffid'] || r.id || '').trim();
+
+    if (text.includes(q)) {
+      if (!addedIds.has(rawId)) {
+        addedIds.add(rawId);
+        const formatted = formatSchemeRecord(r);
+        results.push({
+          id: formatted.id,
+          slug: formatted.slug,
+          title: formatted.title,
+          category: formatted.category,
+          description: formatted.sections.about,
+          benefits: formatted.sections.benefits,
+          eligibility: formatted.sections.eligibility,
+          url: formatted.url,
+          source: formatted.source,
+          scheme: formatted,
+        });
+      }
+    }
+  }
+
+  return res.json({
+    success: true,
+    query: q,
+    total: results.length,
+    results: results.slice(0, limit),
+  });
 });
 
 // GET /api/schemes/:id - Get scheme details by id, slug, or topic
@@ -561,6 +690,20 @@ schemesRouter.get('/:id', (req: Request, res: Response) => {
     found = all.find((r) => (r.title || '').toLowerCase().includes(param));
   }
 
+  // Check curated services if not found in CSV
+  if (!found) {
+    const curated = loadCuratedServices();
+    const curatedMatch = curated.find((s) => {
+      const matchId = (s.id || '').toLowerCase() === param;
+      const matchSlug = (s.title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') === param;
+      const matchAlias = alias && alias.id && s.id === alias.id;
+      return matchId || matchSlug || matchAlias;
+    });
+    if (curatedMatch) {
+      return res.json(formatCuratedService(curatedMatch));
+    }
+  }
+
   // If still not found but alias exists in our well-known map or is a known slug
   if (!found && alias) {
     found = {
@@ -568,7 +711,7 @@ schemesRouter.get('/:id', (req: Request, res: Response) => {
       '\ufeffid': alias.id,
       topic: alias.topic,
       title: alias.topic,
-      category: 'agriculture',
+      category: 'government-services',
       question: `${alias.topic} योजना क्या है और इसका लाभ कैसे लें?`,
       answer: `${alias.topic} योजना के बारे में संपूर्ण विवरण।`,
       keywords: param,

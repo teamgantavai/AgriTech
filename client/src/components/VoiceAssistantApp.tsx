@@ -147,7 +147,10 @@ export function VoiceAssistantApp({ defaultTab = 'chat' }: VoiceAssistantAppProp
           msg = `Opening scheme: ${args.schemeId}`;
           break;
         case 'searchScheme':
-          msg = `Searching: "${args.query}"`;
+          msg = `Searching schemes: "${args.query}"`;
+          break;
+        case 'searchInternet':
+          msg = `🌐 Searching web: "${args.query}"`;
           break;
         case 'openPage':
           msg = `Opening page: ${args.page}`;

@@ -253,16 +253,17 @@ Think of yourself as a knowledgeable village-level government services guide who
 // ─────────────────────────────────────────────────────────────────────────────
 // GRAM SATHI — VOICE SYSTEM INSTRUCTION (concise, spoken-word)
 // ─────────────────────────────────────────────────────────────────────────────
-const VOICE_SYSTEM_INSTRUCTION = `You are Gram Sathi (ग्राम साथी), a friendly multilingual voice assistant that helps Indian citizens understand government schemes, services, benefits, certificates and welfare programs.
+const VOICE_SYSTEM_INSTRUCTION = `You are Gram Sathi (ग्राम साथी), a friendly, highly capable multilingual voice assistant with comprehensive knowledge of ALL Indian government schemes, citizen services, student scholarships, exams, education loans, agriculture, welfare programs, and certificates.
 
 CRITICAL RULES FOR VOICE:
 1. Respond directly in 2 to 3 short spoken sentences only — no more.
-2. NEVER use markdown symbols (no asterisks, no bullet points, no headers, no hash marks) — speech synthesis must work cleanly.
-3. Respond in the user's language immediately (Hindi, Punjabi, English, Hinglish, etc.).
-4. Keep tone warm, respectful, helpful and practical.
-5. For scheme questions, name 1–2 most relevant schemes and ask what specific information the user needs.
-6. NEVER make up eligibility, amounts or deadlines. If unsure, say "आप आधिकारिक पोर्टल पर जांच करें।"
-7. NEVER ask for Aadhaar, OTP, PIN or any sensitive personal information.`;
+2. NEVER say "sorry I have no access" when asked about student services, scholarships, or citizen schemes. You have full access to information across all sectors!
+3. For students and education queries, guide them on key schemes like National Scholarship Portal (NSP), Pre/Post-Matric Scholarships, PM-Vidyalaxmi education loans, AICTE scholarships, fee waivers, and state student portals (scholarships.gov.in).
+4. NEVER use markdown symbols (no asterisks, no bullet points, no headers, no hash marks) — speech synthesis must work cleanly.
+5. Respond in the user's language immediately (Hindi, Punjabi, English, Hinglish, etc.).
+6. Keep tone warm, respectful, helpful and practical.
+7. NEVER make up eligibility, amounts or deadlines. If unsure, say "आप scholarships.gov.in या myscheme.gov.in पोर्टल पर जांच करें।"
+8. NEVER ask for Aadhaar, OTP, PIN or any sensitive personal information.`;
 
 export interface GeminiMessage {
   role: 'user' | 'model';
@@ -305,9 +306,9 @@ const LANG_DISPLAY: Record<string, string> = {
 
 // Candidate models verified working with @google/genai
 const CANDIDATE_MODELS = [
+  'gemini-2.5-flash',
   'gemini-3.6-flash',
   'gemini-3.7-flash',
-  'gemini-3.5-flash-lite',
   'gemini-flash-latest',
 ];
 
@@ -377,16 +378,32 @@ export async function generateChatResponse(
       try {
         for (let attempt = 1; attempt <= 2; attempt++) {
           try {
-            const result = await client.models.generateContent({
-              model: modelName,
-              contents,
-              config: {
-                systemInstruction: voiceMode ? VOICE_SYSTEM_INSTRUCTION : SYSTEM_INSTRUCTION,
-                temperature: voiceMode ? 0.2 : 0.4,
-                topP: 0.85,
-                maxOutputTokens: voiceMode ? 350 : 4096,
-              },
-            });
+            let result: any;
+            try {
+              result = await client.models.generateContent({
+                model: modelName,
+                contents,
+                config: {
+                  systemInstruction: voiceMode ? VOICE_SYSTEM_INSTRUCTION : SYSTEM_INSTRUCTION,
+                  temperature: voiceMode ? 0.2 : 0.4,
+                  topP: 0.85,
+                  maxOutputTokens: voiceMode ? 350 : 4096,
+                  tools: [{ googleSearch: {} } as any],
+                },
+              });
+            } catch (searchToolErr) {
+              // If googleSearch tool is unsupported for model, fallback to standard generateContent
+              result = await client.models.generateContent({
+                model: modelName,
+                contents,
+                config: {
+                  systemInstruction: voiceMode ? VOICE_SYSTEM_INSTRUCTION : SYSTEM_INSTRUCTION,
+                  temperature: voiceMode ? 0.2 : 0.4,
+                  topP: 0.85,
+                  maxOutputTokens: voiceMode ? 350 : 4096,
+                },
+              });
+            }
             responseText = result.text || '';
             lastError = null;
             break;
