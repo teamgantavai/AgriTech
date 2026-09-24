@@ -56,18 +56,32 @@ function saveCachedToken(token: string, model: string, validSeconds: number = 12
 /**
  * Fetch a fresh ephemeral token from the backend /api/live/token
  */
-async function fetchFreshToken(): Promise<{ token: string; model: string }> {
-  const resp = await fetch('/api/live/token');
-  if (!resp.ok) {
-    const data = await resp.json().catch(() => ({}));
-    throw new Error(data.error || 'Failed to get session token from server');
+async function fetchFreshToken(maxRetries = 2): Promise<{ token: string; model: string }> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+    try {
+      const resp = await fetch('/api/live/token');
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.details || data.error || `Server responded with ${resp.status}`);
+      }
+      const data = await resp.json();
+      if (!data.token) {
+        throw new Error('Server returned empty live session token');
+      }
+      saveCachedToken(data.token, data.model, 120);
+      return { token: data.token, model: data.model };
+    } catch (err: any) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt <= maxRetries) {
+        console.warn(`[TokenService] Ephemeral token fetch attempt ${attempt} failed (${lastError.message}). Retrying...`);
+        await new Promise((r) => setTimeout(r, 600 * attempt));
+      }
+    }
   }
-  const data = await resp.json();
-  if (!data.token) {
-    throw new Error('Server returned empty live session token');
-  }
-  saveCachedToken(data.token, data.model, 120);
-  return { token: data.token, model: data.model };
+
+  throw lastError || new Error('Failed to get session token from server');
 }
 
 /**
