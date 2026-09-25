@@ -276,16 +276,8 @@ export interface ChatResponse {
   suggestions?: string[];
 }
 
-let aiClient: GoogleGenAI | null = null;
+import { withGeminiFailover, getAllGeminiApiKeys } from './geminiKeys';
 
-function getClient(): GoogleGenAI {
-  if (!aiClient) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error('GEMINI_API_KEY environment variable is not set.');
-    aiClient = new GoogleGenAI({ apiKey });
-  }
-  return aiClient;
-}
 
 const LANG_DISPLAY: Record<string, string> = {
   'hi': 'Hindi (Devanagari script)',
@@ -321,8 +313,6 @@ export async function generateChatResponse(
   userPersona?: { role?: string; interest?: string; state?: string } | string,
 ): Promise<ChatResponse> {
   try {
-    const client = getClient();
-
     const suggestionInstruction = voiceMode
       ? ''
       : `\n[MANDATORY FOLLOW-UP SUGGESTIONS]:\nAt the very end of your response, always suggest 2 to 3 natural, highly relevant follow-up questions or related schemes based on the knowledge base that the user might want to explore next in their communication language.\nFormat them strictly as:\n---SUGGESTIONS---\n1. [Suggestion 1]\n2. [Suggestion 2]\n3. [Suggestion 3]`;
@@ -371,65 +361,67 @@ export async function generateChatResponse(
       },
     ];
 
-    let responseText = '';
-    let lastError: Error | null = null;
+    const responseText = await withGeminiFailover(async (_key, client) => {
+      let candidateText = '';
+      let lastModelError: Error | null = null;
 
-    for (const modelName of CANDIDATE_MODELS) {
-      try {
-        for (let attempt = 1; attempt <= 2; attempt++) {
-          try {
-            let result: any;
+      for (const modelName of CANDIDATE_MODELS) {
+        try {
+          for (let attempt = 1; attempt <= 2; attempt++) {
             try {
-              result = await client.models.generateContent({
-                model: modelName,
-                contents,
-                config: {
-                  systemInstruction: voiceMode ? VOICE_SYSTEM_INSTRUCTION : SYSTEM_INSTRUCTION,
-                  temperature: voiceMode ? 0.2 : 0.4,
-                  topP: 0.85,
-                  maxOutputTokens: voiceMode ? 350 : 4096,
-                  tools: [{ googleSearch: {} } as any],
-                },
-              });
-            } catch (searchToolErr) {
-              // If googleSearch tool is unsupported for model, fallback to standard generateContent
-              result = await client.models.generateContent({
-                model: modelName,
-                contents,
-                config: {
-                  systemInstruction: voiceMode ? VOICE_SYSTEM_INSTRUCTION : SYSTEM_INSTRUCTION,
-                  temperature: voiceMode ? 0.2 : 0.4,
-                  topP: 0.85,
-                  maxOutputTokens: voiceMode ? 350 : 4096,
-                },
-              });
-            }
-            responseText = result.text || '';
-            lastError = null;
-            break;
-          } catch (err: unknown) {
-            lastError = err as Error;
-            const msg = lastError.message || '';
-            const isTransient = msg.includes('503') || msg.includes('high demand') || msg.includes('temporarily unavailable');
-            if (isTransient && attempt === 1) {
-              console.warn(`[Gemini:${modelName}] Transient ${msg.slice(0, 50)}, retrying in 1s...`);
-              await new Promise((resolve) => setTimeout(resolve, 1000));
-            } else {
-              throw err;
+              let result: any;
+              try {
+                result = await client.models.generateContent({
+                  model: modelName,
+                  contents,
+                  config: {
+                    systemInstruction: voiceMode ? VOICE_SYSTEM_INSTRUCTION : SYSTEM_INSTRUCTION,
+                    temperature: voiceMode ? 0.2 : 0.4,
+                    topP: 0.85,
+                    maxOutputTokens: voiceMode ? 350 : 4096,
+                    tools: [{ googleSearch: {} } as any],
+                  },
+                });
+              } catch (searchToolErr) {
+                // If googleSearch tool is unsupported for model, fallback to standard generateContent
+                result = await client.models.generateContent({
+                  model: modelName,
+                  contents,
+                  config: {
+                    systemInstruction: voiceMode ? VOICE_SYSTEM_INSTRUCTION : SYSTEM_INSTRUCTION,
+                    temperature: voiceMode ? 0.2 : 0.4,
+                    topP: 0.85,
+                    maxOutputTokens: voiceMode ? 350 : 4096,
+                  },
+                });
+              }
+              candidateText = result.text || '';
+              lastModelError = null;
+              break;
+            } catch (err: unknown) {
+              lastModelError = err as Error;
+              const msg = lastModelError.message || '';
+              const isTransient = msg.includes('503') || msg.includes('high demand') || msg.includes('temporarily unavailable');
+              if (isTransient && attempt === 1) {
+                console.warn(`[Gemini:${modelName}] Transient ${msg.slice(0, 50)}, retrying in 1s...`);
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+              } else {
+                throw err;
+              }
             }
           }
+
+          if (candidateText) return candidateText;
+        } catch (err: unknown) {
+          lastModelError = err as Error;
+          console.warn(`[Gemini] Model ${modelName} failed (${lastModelError.message?.slice(0, 80)}...). Trying next...`);
         }
-
-        if (responseText) break;
-      } catch (err: unknown) {
-        lastError = err as Error;
-        console.warn(`[Gemini] Model ${modelName} failed (${lastError.message?.slice(0, 80)}...). Trying next...`);
       }
-    }
 
-    if (!responseText && lastError) {
-      throw lastError;
-    }
+      if (!candidateText && lastModelError) throw lastModelError;
+      return candidateText;
+    }, 'ChatResponse');
+
 
     let cleanAnswer = responseText;
     let suggestions: string[] = [];
@@ -498,7 +490,8 @@ export async function* generateChatResponseStream(
   voiceMode: boolean = false,
   userPersona?: { role?: string; interest?: string; state?: string } | string,
 ): AsyncGenerator<string, void, unknown> {
-  const client = getClient();
+  const keys = getAllGeminiApiKeys();
+  if (keys.length === 0) throw new Error('GEMINI_API_KEY environment variable is not set.');
 
   const voiceModeInstruction = voiceMode
     ? `[VOICE CONVERSATION MODE — Respond naturally in 2 to 3 short sentences. No markdown, no asterisks, no lists.]\n\n`
@@ -545,31 +538,34 @@ export async function* generateChatResponseStream(
     },
   ];
 
-  for (const modelName of CANDIDATE_MODELS) {
-    try {
-      const responseStream = await client.models.generateContentStream({
-        model: modelName,
-        contents,
-        config: {
-          systemInstruction: voiceMode ? VOICE_SYSTEM_INSTRUCTION : SYSTEM_INSTRUCTION,
-          temperature: voiceMode ? 0.2 : 0.4,
-          topP: 0.85,
-          maxOutputTokens: voiceMode ? 350 : 4096,
-        },
-      });
+  for (let k = 0; k < keys.length; k++) {
+    const client = new GoogleGenAI({ apiKey: keys[k] });
+    for (const modelName of CANDIDATE_MODELS) {
+      try {
+        const responseStream = await client.models.generateContentStream({
+          model: modelName,
+          contents,
+          config: {
+            systemInstruction: voiceMode ? VOICE_SYSTEM_INSTRUCTION : SYSTEM_INSTRUCTION,
+            temperature: voiceMode ? 0.2 : 0.4,
+            topP: 0.85,
+            maxOutputTokens: voiceMode ? 350 : 4096,
+          },
+        });
 
-      for await (const chunk of responseStream) {
-        const text = chunk.text;
-        if (text) {
-          yield text;
+        for await (const chunk of responseStream) {
+          const text = chunk.text;
+          if (text) {
+            yield text;
+          }
         }
+        return;
+      } catch (err: unknown) {
+        console.warn(`[GeminiStream] Key #${k + 1} Model ${modelName} stream failed. Trying next...`, (err as Error)?.message || err);
       }
-      return;
-    } catch (err: unknown) {
-      console.warn(`[GeminiStream] Model ${modelName} stream failed. Trying next...`, (err as Error)?.message || err);
     }
   }
 
-  throw new Error('Failed to stream response from Gemini candidate models.');
+  throw new Error('Failed to stream response from Gemini candidate models across available API keys.');
 }
 

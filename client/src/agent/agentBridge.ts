@@ -5,8 +5,22 @@
 // ============================================================
 
 import { AgentStateMachine, AgentState, type ConfirmationRequest } from './agentStateMachine';
+import { eventBus } from '../services/eventBus';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+
+let appNavigator: ((route: string) => void) | null = null;
+
+/**
+ * Register React Router's useNavigate function so navigation is instantaneous
+ * without causing full page reloads or unmounting persistent overlays.
+ */
+export function registerAppNavigator(nav: (route: string) => void): () => void {
+  appNavigator = nav;
+  return () => {
+    if (appNavigator === nav) appNavigator = null;
+  };
+}
 
 export type AgentBridgeEvent =
   | 'navigate'
@@ -50,6 +64,12 @@ let currentUIState = {
 export function updateUIState(partial: Partial<typeof currentUIState>): void {
   currentUIState = { ...currentUIState, ...partial };
   AgentStateMachine.updateUIState(currentUIState);
+  eventBus.emit({
+    type: 'UI_STATE_UPDATE',
+    route: currentUIState.route,
+    title: currentUIState.pageName,
+    data: { ...currentUIState },
+  });
 }
 
 export function getCurrentUIState(): typeof currentUIState {
@@ -80,11 +100,37 @@ export function executeClientAction(action: AgentBridgeAction): unknown {
   switch (type) {
     case 'navigate': {
       const route = String(params.route || '/');
-      window.history.pushState({}, '', route);
-      // React Router update — dispatch popstate to trigger re-render
-      window.dispatchEvent(new PopStateEvent('popstate'));
+      eventBus.emit({
+        type: 'NAVIGATION_START',
+        route,
+        action: 'navigate',
+        target: route,
+        message: `Navigating to ${route}`,
+      });
+
+      if (appNavigator) {
+        try {
+          appNavigator(route);
+        } catch (err) {
+          console.warn('[AgentBridge] appNavigator error, fallback to pushState:', err);
+          window.history.pushState({}, '', route);
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        }
+      } else {
+        window.history.pushState({}, '', route);
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      }
+
+      eventBus.emit({
+        type: 'NAVIGATION_COMPLETE',
+        route,
+        action: 'navigate',
+        target: route,
+        message: `Navigated to ${route}`,
+      });
       return { navigated: true, route };
     }
+
 
     case 'get_ui_state':
       return getCurrentUIState();

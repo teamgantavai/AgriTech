@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { GoogleGenAI } from '@google/genai';
+import { withGeminiFailover, getAllGeminiApiKeys } from '../services/geminiKeys';
 
 export const liveTokenRouter = Router();
 
@@ -7,21 +8,11 @@ export const liveTokenRouter = Router();
 const GEMINI_LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-2.5-flash-native-audio-latest';
 
 /**
- * POST /api/live/token
- * GET /api/live/token
- * 
- * Secure server-side endpoint that generates a short-lived ephemeral token
- * for client-side Gemini Live API connections.
- * 
- * SECURITY: The permanent GEMINI_API_KEY is stored strictly in the server environment
- * and is NEVER exposed to the browser. Only the temporary, single-use/time-limited
- * token name (e.g. "auth_tokens/...") is sent to the client.
+ * Mint an ephemeral token with a specific GoogleGenAI client instance
  */
-async function mintEphemeralToken(apiKey: string, maxRetries = 2): Promise<{ name: string }> {
-  const ai = new GoogleGenAI({ apiKey });
+async function mintWithClient(ai: GoogleGenAI, maxRetries = 1): Promise<{ name: string }> {
   const now = Date.now();
   const expireTime = new Date(now + 30 * 60 * 1000).toISOString();
-  // Allow new sessions to be established anytime within the token's lifetime
   const newSessionExpireTime = new Date(now + 30 * 60 * 1000).toISOString();
 
   let lastError: any = null;
@@ -43,12 +34,8 @@ async function mintEphemeralToken(apiKey: string, maxRetries = 2): Promise<{ nam
       return token as typeof token & { name: string };
     } catch (err: any) {
       lastError = err;
-      const cause = err?.cause?.code || err?.cause?.message || '';
-      console.warn(`[LiveToken] Mint attempt ${attempt}/${maxRetries + 1} failed: ${err?.message || err}${cause ? ` (cause: ${cause})` : ''}`);
-
       if (attempt <= maxRetries) {
-        // Exponential backoff delay
-        await new Promise((r) => setTimeout(r, 600 * attempt));
+        await new Promise((r) => setTimeout(r, 400 * attempt));
       }
     }
   }
@@ -57,17 +44,20 @@ async function mintEphemeralToken(apiKey: string, maxRetries = 2): Promise<{ nam
 }
 
 async function handleGenerateToken(_req: Request, res: Response) {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const keys = getAllGeminiApiKeys();
 
-  if (!apiKey) {
-    console.error('[LiveToken] GEMINI_API_KEY is not configured on the server.');
+  if (keys.length === 0) {
+    console.error('[LiveToken] No Gemini API keys configured on the server.');
     return res.status(500).json({
-      error: 'Server configuration error: Gemini API key is missing on the server.'
+      error: 'Server configuration error: Gemini API key is missing on the server (GEMINI_API_KEY).'
     });
   }
 
   try {
-    const token = await mintEphemeralToken(apiKey, 2);
+    const token = await withGeminiFailover(async (_key, ai, keyIndex) => {
+      console.log(`[LiveToken] Minting token using API Key #${keyIndex + 1}...`);
+      return await mintWithClient(ai, 1);
+    }, 'LiveToken');
 
     console.log(`[LiveToken] Successfully generated ephemeral token: ${token.name.substring(0, 20)}...`);
 
@@ -79,10 +69,10 @@ async function handleGenerateToken(_req: Request, res: Response) {
   } catch (err: any) {
     const cause = err?.cause?.code || err?.cause?.message || '';
     const errorDetails = cause ? `${err?.message || 'Network error'} (${cause})` : (err?.message || 'Unknown network error');
-    console.error(`[LiveToken] Error creating ephemeral token: ${err?.message || err}${cause ? ` [cause: ${cause}]` : ''}`);
+    console.error(`[LiveToken] Error creating ephemeral token across all keys: ${err?.message || err}${cause ? ` [cause: ${cause}]` : ''}`);
 
     return res.status(502).json({
-      error: 'Failed to create ephemeral token for Gemini Live.',
+      error: 'Failed to create ephemeral token for Gemini Live across available API keys.',
       details: errorDetails
     });
   }
@@ -90,4 +80,5 @@ async function handleGenerateToken(_req: Request, res: Response) {
 
 liveTokenRouter.post('/token', handleGenerateToken);
 liveTokenRouter.get('/token', handleGenerateToken);
+
 

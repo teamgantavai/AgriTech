@@ -114,9 +114,12 @@ export async function executeToolCall(
       }
       case 'navigateToScheme': {
         const schemeId = String(args.schemeId || '');
+        const targetRoute = `/services/${schemeId}`;
         dispatchToolEvent('navigateToScheme', { schemeId });
-        return { id, result: { success: true, schemeId } };
+        executeClientAction({ type: 'navigate', params: { route: targetRoute } });
+        return { id, result: { success: true, schemeId, route: targetRoute } };
       }
+
 
       case 'searchInternet': {
         const query = String(args.query || '');
@@ -176,10 +179,20 @@ export async function executeToolCall(
       }
 
       case 'openPage': {
-        const page = String(args.page || '');
-        dispatchToolEvent('openPage', { page });
-        return { id, result: { success: true, page } };
+        const page = String(args.page || '').toLowerCase();
+        let targetRoute = '/';
+        if (page === 'calendar' || page === 'crop-calendar' || page.includes('calendar')) targetRoute = '/calendar';
+        else if (page === 'agriculture' || page === 'farming') targetRoute = '/schemes/agriculture';
+        else if (page === 'scholarships' || page === 'scholarship') targetRoute = '/schemes/scholarships';
+        else if (page === 'business' || page === 'loans') targetRoute = '/schemes/business';
+        else if (page === 'health') targetRoute = '/schemes/health';
+        else if (page === 'schemes' || page.includes('scheme')) targetRoute = '/schemes';
+        else if (page === 'chat') targetRoute = '/chat';
+        dispatchToolEvent('openPage', { page, route: targetRoute });
+        executeClientAction({ type: 'navigate', params: { route: targetRoute } });
+        return { id, result: { success: true, page, route: targetRoute } };
       }
+
 
       case 'getSchemeDetails': {
         const schemeId = String(args.schemeId || '');
