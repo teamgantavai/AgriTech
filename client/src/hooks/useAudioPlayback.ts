@@ -15,8 +15,9 @@
 //     → fires onPlaybackComplete exactly once per turn
 // ============================================================
 
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
 import { int16ToFloat32 } from '../services/audioProcessor';
+import { voiceManager } from '../services/VoiceSessionManager';
 
 const OUTPUT_SAMPLE_RATE = 24000; // Gemini Live native audio output rate
 const FIRST_CHUNK_LOOKAHEAD_S = 0.05; // 50ms lookahead for initial chunk
@@ -34,6 +35,7 @@ interface AudioQueueItem {
   generationId: number;
   turnId: number;
   chunkId: number;
+  speechId?: string;
 }
 
 export function useAudioPlayback(options: PlaybackOptions = {}) {
@@ -176,6 +178,44 @@ export function useAudioPlayback(options: PlaybackOptions = {}) {
     }
   }, [clearWatchdog, stopAnalyserLoop]);
 
+  // Register singleton audio player with VoiceSessionManager
+  useEffect(() => {
+    const unregister = voiceManager.registerAudioPlayer();
+    return () => unregister();
+  }, []);
+
+  // ─────────────────────────────────────────────────────────
+  // stopAll — Flush audio for interruption or teardown
+  // ─────────────────────────────────────────────────────────
+  const stopAll = useCallback(() => {
+    clearWatchdog();
+    audioQueueRef.current = [];
+
+    for (const source of activeSourcesRef.current) {
+      try {
+        source.stop();
+        source.disconnect();
+      } catch {
+        // already stopped
+      }
+    }
+    activeSourcesRef.current = [];
+    pendingSourceCountRef.current = 0;
+    turnCompleteRef.current = false;
+    audioReceivingCompleteRef.current = false;
+    turnCompleteGenRef.current = -1;
+    turnCompletedFiredRef.current = false;
+    isPlaybackLoopRunningRef.current = false;
+
+    const ctx = audioCtxRef.current;
+    nextPlayTimeRef.current = ctx ? ctx.currentTime : 0;
+
+    if (isPlayingRef.current) {
+      isPlayingRef.current = false;
+      stopAnalyserLoop();
+    }
+  }, [clearWatchdog, stopAnalyserLoop]);
+
   // ─────────────────────────────────────────────────────────
   // Resilient Playback Scheduler Loop
   // Drains audioQueueRef and schedules chunks onto AudioContext timeline
@@ -201,6 +241,13 @@ export function useAudioPlayback(options: PlaybackOptions = {}) {
 
       while (audioQueueRef.current.length > 0) {
         const item = audioQueueRef.current.shift()!;
+
+        // Validate speech ID — discard if superseded or cancelled
+        if (item.speechId && !voiceManager.isSpeechValid(item.speechId)) {
+          console.warn(`[AudioPlayback] Discarding queued chunk from cancelled speech ${item.speechId}`);
+          continue;
+        }
+
         const float32 = int16ToFloat32(item.pcm);
 
         const buffer = ctx.createBuffer(1, float32.length, OUTPUT_SAMPLE_RATE);
@@ -272,9 +319,29 @@ export function useAudioPlayback(options: PlaybackOptions = {}) {
   // enqueueChunk — The entry point for incoming Gemini audio
   // ─────────────────────────────────────────────────────────
   const enqueueChunk = useCallback(
-    (pcm: Int16Array, generationId: number, turnId?: number) => {
+    (pcm: Int16Array, generationId: number, turnId?: number, speechId?: string) => {
+      // Discard older generation chunks
+      if (
+        generationId < currentGenerationRef.current &&
+        currentGenerationRef.current !== -1 &&
+        !turnCompletedFiredRef.current
+      ) {
+        return;
+      }
+
+      // Discard chunks from cancelled speech
+      if (speechId && !voiceManager.isSpeechValid(speechId)) {
+        return;
+      }
+
       const activeTurn = turnId ?? currentTurnIdRef.current;
       currentTurnIdRef.current = activeTurn;
+
+      // If a newer generation arrives while an older one was playing, stop prior playback immediately
+      if (generationId > currentGenerationRef.current && currentGenerationRef.current !== -1 && isPlayingRef.current) {
+        console.log(`[AudioPlayback] Superseding generation ${currentGenerationRef.current} with ${generationId}`);
+        stopAll();
+      }
 
       // If a new generation begins or turnCompleted previously fired, synchronize
       if (
@@ -302,12 +369,13 @@ export function useAudioPlayback(options: PlaybackOptions = {}) {
         generationId,
         turnId: activeTurn,
         chunkId,
+        speechId,
       });
 
       // Kick scheduler
       drainQueue();
     },
-    [drainQueue]
+    [drainQueue, stopAll]
   );
 
   // ─────────────────────────────────────────────────────────
@@ -385,37 +453,6 @@ export function useAudioPlayback(options: PlaybackOptions = {}) {
     lastAudioPlaybackTimeRef.current = 0;
   }, [clearWatchdog]);
 
-  // ─────────────────────────────────────────────────────────
-  // stopAll — Flush audio for interruption or teardown
-  // ─────────────────────────────────────────────────────────
-  const stopAll = useCallback(() => {
-    clearWatchdog();
-    audioQueueRef.current = [];
-
-    for (const source of activeSourcesRef.current) {
-      try {
-        source.stop();
-        source.disconnect();
-      } catch {
-        // already stopped
-      }
-    }
-    activeSourcesRef.current = [];
-    pendingSourceCountRef.current = 0;
-    turnCompleteRef.current = false;
-    audioReceivingCompleteRef.current = false;
-    turnCompleteGenRef.current = -1;
-    turnCompletedFiredRef.current = false;
-    isPlaybackLoopRunningRef.current = false;
-
-    const ctx = audioCtxRef.current;
-    nextPlayTimeRef.current = ctx ? ctx.currentTime : 0;
-
-    if (isPlayingRef.current) {
-      isPlayingRef.current = false;
-      stopAnalyserLoop();
-    }
-  }, [clearWatchdog, stopAnalyserLoop]);
 
   // ─────────────────────────────────────────────────────────
   // acceptGeneration

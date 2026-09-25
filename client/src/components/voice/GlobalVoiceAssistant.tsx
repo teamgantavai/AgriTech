@@ -43,8 +43,11 @@ export function GlobalVoiceAssistant() {
       <aside aria-label="Voice Assistant Controls" className="fixed bottom-5 right-5 z-40">
         <button
           id="global-voice-fab"
-          onClick={() => startVoice({ defaultMode: 'expanded' })}
-          className="group relative flex items-center gap-2.5 px-4 py-3 bg-gradient-to-r from-emerald-600 to-green-700 hover:from-emerald-500 hover:to-green-600 text-white rounded-full shadow-xl shadow-green-900/20 hover:shadow-2xl hover:shadow-green-900/30 transition-all duration-200 active:scale-95 cursor-pointer border border-emerald-400/30"
+          onClick={() => {
+            const isProfile = typeof window !== 'undefined' && window.location.pathname.includes('/profile');
+            startVoice({ defaultMode: 'expanded', profileMode: isProfile });
+          }}
+          className="group relative flex items-center gap-2.5 px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full shadow-xl shadow-emerald-900/20 hover:shadow-2xl transition-all duration-200 active:scale-95 cursor-pointer border border-emerald-400/30"
           aria-label="Talk to Gram Sathi AI"
         >
           {/* Animated pulse ring */}
@@ -219,7 +222,7 @@ export function GlobalVoiceAssistant() {
           <div>
             <h2 className="text-sm font-bold text-neutral-900 leading-tight">Gram Sathi AI</h2>
             <div className="text-[11px] text-emerald-700 font-medium">
-              {isSpeaking ? 'Speaking...' : isListening ? 'Listening...' : 'Active Session'}
+              {isSpeaking ? 'Speaking...' : isListening ? 'Listening...' : 'Ready'}
             </div>
           </div>
         </div>
@@ -286,15 +289,23 @@ export function GlobalVoiceAssistant() {
         </div>
       </header>
 
-      {/* ── Live Action Indicator Banner ── */}
+      {/* ── Action Indicator Banner (Zero technical terms) ── */}
       {currentAction && (
         <div className="px-5 py-2.5 bg-gradient-to-r from-emerald-50 to-teal-50 border-b border-emerald-100 flex items-center justify-between animate-fade-down flex-shrink-0">
           <div className="flex items-center gap-2 text-xs font-semibold text-emerald-800 truncate">
             <span className="text-base">{currentAction.icon || '→'}</span>
             <span className="truncate">{currentAction.label}</span>
           </div>
-          <span className="text-[10px] text-emerald-600 bg-emerald-100/80 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
-            Live
+          <span className="text-[10px] text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full font-bold">
+            {currentAction.status === 'waiting_confirmation'
+              ? 'Please confirm'
+              : currentAction.status === 'completed'
+              ? '✓ Saved'
+              : isSpeaking
+              ? 'Speaking...'
+              : isListening
+              ? 'Listening...'
+              : 'Understanding...'}
           </span>
         </div>
       )}
@@ -310,33 +321,74 @@ export function GlobalVoiceAssistant() {
           />
           <div className="mt-2 text-xs font-semibold text-neutral-500 text-center">
             {isSpeaking
-              ? 'AI Speaking...'
+              ? 'Speaking...'
               : isListening
               ? 'Listening... Speak naturally in your language'
               : isProcessing
-              ? 'Processing...'
+              ? 'Understanding your answer...'
               : isConnecting
-              ? 'Connecting to Gemini Live...'
-              : 'Connected'}
+              ? 'Connecting...'
+              : 'Your turn'}
           </div>
         </div>
 
         {/* Realtime Conversation Turns */}
         <div className="flex-1 flex flex-col gap-3 min-h-[160px]">
-          {turns.length === 0 ? (
-            <div className="text-center my-auto p-4 bg-neutral-50 rounded-2xl border border-dashed border-neutral-200">
-              <div className="text-2xl mb-1">🌾</div>
-              <div className="text-xs font-semibold text-neutral-700">Try saying:</div>
-              <div className="text-[11px] text-neutral-500 mt-1 flex flex-col gap-1">
-                <span>"Open agriculture schemes"</span>
-                <span>"Tell me about PM-Kisan eKYC"</span>
-                <span>"Check crop calendar for Punjab"</span>
-              </div>
-            </div>
-          ) : (
-            turns.slice(-6).map((turn, idx) => (
+          {(() => {
+            const visibleTurns = turns.filter((turn) => Boolean(turn.text && turn.text.trim()));
+            if (visibleTurns.length === 0) {
+              return typeof window !== 'undefined' && window.location.pathname.includes('/profile') ? (
+                <div className="text-center my-auto p-4 bg-emerald-50/70 rounded-2xl border border-emerald-200">
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-100/90 text-emerald-800 text-[11px] font-bold mb-2">
+                    <span>🌐 भाषा स्वतः पहचानी जाएगी (Auto-detecting language)</span>
+                  </div>
+                  <div className="text-xs font-bold text-emerald-950 mb-1">
+                    नागरिक प्रोफ़ाइल सहायक • Citizen Profile Assistant
+                  </div>
+                  <p className="text-[11px] text-slate-600 mb-3">
+                    अपनी पसंद की किसी भी भाषा (हिंदी, English, ਪੰਜਾਬੀ, etc.) में बोलिए — ग्राम साथी अपने-आप समझ लेगा।
+                  </p>
+                  <div className="flex items-center justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const hiLang = SUPPORTED_LANGUAGES.find((l) => l.code === 'hi');
+                        if (hiLang) setLanguage(hiLang);
+                      }}
+                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
+                    >
+                      🇮🇳 हिन्दी (Hindi)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const enLang = SUPPORTED_LANGUAGES.find((l) => l.code === 'en');
+                        if (enLang) setLanguage(enLang);
+                      }}
+                      className="px-3.5 py-1.5 bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold shadow-xs cursor-pointer"
+                    >
+                      🇬🇧 English
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center my-auto p-4 bg-neutral-50 rounded-2xl border border-dashed border-neutral-200">
+                  <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-200/80 text-slate-700 text-[10px] font-bold mb-2">
+                    <span>🌐 भाषा स्वतः पहचानी जाएगी (Auto-Detect Active)</span>
+                  </div>
+                  <div className="text-xs font-semibold text-neutral-700">Try saying in any language:</div>
+                  <div className="text-[11px] text-neutral-500 mt-1 flex flex-col gap-1">
+                    <span>"मुझे पीएम किसान योजना के बारे में बताओ"</span>
+                    <span>"Open agriculture schemes"</span>
+                    <span>"ਮੇਰੇ ਲਈ ਸਕੀਮਾਂ ਦਿਖਾਓ"</span>
+                  </div>
+                </div>
+              );
+            }
+
+            return visibleTurns.slice(-6).map((turn, idx) => (
               <div
-                key={idx}
+                key={turn.id || idx}
                 className={`flex flex-col text-xs p-3 rounded-2xl ${
                   turn.role === 'user'
                     ? 'bg-emerald-50/70 border border-emerald-100 text-emerald-950 ml-6'
@@ -348,9 +400,8 @@ export function GlobalVoiceAssistant() {
                 </span>
                 <p className="leading-relaxed whitespace-pre-wrap">{turn.text}</p>
               </div>
-            ))
-
-          )}
+            ));
+          })()}
         </div>
 
         {/* Action Timeline Toggle */}

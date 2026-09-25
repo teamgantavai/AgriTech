@@ -10,6 +10,8 @@ import { GeminiLiveSession } from '../services/geminiLive';
 import { loadProfile, updateProfile, detectLanguageFromText, getGreetingText, getFarmerContext, type SupportedLanguage } from '../services/sessionManager';
 import { getLiveToken, clearCachedToken } from '../services/tokenService';
 import { profiler } from '../services/voiceProfiler';
+import { voiceManager } from '../services/VoiceSessionManager';
+import { semanticScroll } from '../services/semanticScroll';
 import { useMicrophone } from './useMicrophone';
 import { useAudioPlayback } from './useAudioPlayback';
 
@@ -67,6 +69,8 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
   const voiceStateRef = useRef<VoiceState>(VoiceState.IDLE);
   const reconnectCountRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isReconnectingRef = useRef(false);
+  const currentSpeechIdRef = useRef<string>('');
   const turnStartTimeRef = useRef<number>(0);
   const speechStartTimeRef = useRef<number>(0);
   const partialAssistantTextRef = useRef('');
@@ -362,9 +366,12 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
         voiceStateRef.current === VoiceState.LISTENING ||
         voiceStateRef.current === VoiceState.READY_FOR_USER
       ) {
-        // Note: Do NOT lock user input here!
-        // Silence frames must continue to be sent to Gemini so server-side VAD
-        // detects the 600ms trailing silence and triggers generation.
+        // 🔒 Lock user input IMMEDIATELY: stop streaming mic frames to Gemini
+        // This eliminates the 2-3s delay from ambient room noise and prevents server-side barge-in cancellations
+        userInputLockedRef.current = true;
+        updateMetric('userInputLocked', true);
+        mic.mute();
+
         geminiGenerationCompleteRef.current = false;
         audioPlaybackCompleteRef.current = false;
         conversationCompletionHandledRef.current = false;
@@ -394,6 +401,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
             console.warn('[GeminiLive] Response timeout in PROCESSING, returning to LISTENING');
             userInputLockedRef.current = false;
             updateMetric('userInputLocked', false);
+            mic.unmute();
             updateState(VoiceState.LISTENING);
             console.log('[STATE] LISTENING');
           }
@@ -484,6 +492,19 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
   // ─── Connect Session (Parallel Initialization) ──────────────
   const connect = useCallback(async () => {
     if (isConnectingRef.current || voiceStateRef.current === VoiceState.CONNECTING) return;
+
+    // Idempotent guard: if session is already active and healthy, do not duplicate
+    if (sessionRef.current?.connected && sessionRef.current.isHealthy()) {
+      console.log('[useGeminiLive] Active session already connected and healthy. Skipping duplicate connect.');
+      return;
+    }
+
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    isReconnectingRef.current = false;
+
     isConnectingRef.current = true;
     clearProcessingWatchdog();
     profiler.mark('VOICE_BUTTON_CLICK');
@@ -495,10 +516,15 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
     playback.prewarmAudioContext();
 
     try {
-      // Disconnect any existing session
-      sessionRef.current?.disconnect();
-      sessionRef.current = null;
+      // Disconnect and clean up any existing session
+      if (sessionRef.current) {
+        sessionRef.current.disconnect();
+        sessionRef.current = null;
+      }
       playback.stopAll();
+      voiceManager.stopSpeaking();
+      semanticScroll.cancelScrolling();
+
       if (reconnectCountRef.current === 0) {
         hasGreetedRef.current = false;
       }
@@ -519,6 +545,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
               profiler.mark('LIVE_SESSION_CONNECTED');
               isConnectingRef.current = false;
               reconnectCountRef.current = 0;
+              isReconnectingRef.current = false;
               updateMetric('sessionConnected', true);
 
               if (!hasGreetedRef.current) {
@@ -526,8 +553,21 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                 const currentP = loadProfile();
                 const hasLang = Boolean(currentP.selectedLanguage || currentP.language);
                 const farmerCtx = getFarmerContext();
+                const isProfilePage = typeof window !== 'undefined' && window.location.pathname.includes('/profile');
 
-                if (hasLang) {
+                if (isProfilePage) {
+                  // Profile Interview Mode: start with profile greeting and auto-detect language
+                  console.log('[useGeminiLive] Profile page detected: initiating profile interview with auto-detect.');
+                  updateOnboardingState(OnboardingState.NORMAL_CONVERSATION);
+
+                  userInputLockedRef.current = true;
+                  updateMetric('userInputLocked', true);
+                  updateState(VoiceState.PROCESSING);
+
+                  sessionRef.current?.sendClientContent(
+                    `[Profile Session Start] Greet warmly and ask for the citizen's full name: 'नमस्ते! Welcome to Gram Sathi. I am here to help you complete your profile. What is your full name? / आपका पूरा नाम क्या है?' Auto-detect whatever language they speak.`
+                  );
+                } else if (hasLang) {
                   const langCodeOrName = currentP.languageCode || currentP.selectedLanguage || currentP.language || 'hi';
                   const greetingText = getGreetingText(langCodeOrName, farmerCtx.currentCrop);
                   console.log(`[useGeminiLive] Auto-greeting triggered (${langCodeOrName}, crop=${farmerCtx.currentCrop || 'none'}): "${greetingText}"`);
@@ -542,17 +582,16 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                     `[Greeting request] Speak ONLY this exact short greeting now and nothing else: "${greetingText}"`
                   );
                 } else {
-                  // No language selected: ask language question
-                  console.log('[useGeminiLive] No language selected. Asking language question.');
-                  updateOnboardingState(OnboardingState.LANGUAGE_QUESTION);
+                  // Auto-detect mode: short warm greeting, auto-detect whatever user speaks
+                  console.log('[useGeminiLive] Auto-detect mode: Greeting user and listening for language.');
+                  updateOnboardingState(OnboardingState.NORMAL_CONVERSATION);
 
-                  // Lock microphone while AI asks language question
                   userInputLockedRef.current = true;
                   updateMetric('userInputLocked', true);
                   updateState(VoiceState.PROCESSING);
 
                   sessionRef.current?.sendClientContent(
-                    `[First interaction] Start now by asking ONLY the short bilingual question: 'नमस्ते! आप कौन सी भाषा में बात करना चाहते हैं? Which language would you like to speak in?' Do not say anything else.`
+                    `[First interaction] Start with a short warm greeting: 'नमस्ते! Hello! I am Gram Sathi. How can I help you today? / बताइए, मैं आपकी कैसे मदद करूँ?' Auto-detect the language from whatever the user says.`
                   );
                 }
               } else {
@@ -564,11 +603,16 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
             },
             onFirstResponseEvent: () => {
               console.log(`[TURN ${turnNumberRef.current}] Gemini response started`);
+              currentSpeechIdRef.current = voiceManager.startNewSpeech();
               profiler.mark('FIRST_GEMINI_RESPONSE_EVENT');
             },
             onAudioChunk: (pcm, generationId) => {
               clearProcessingWatchdog();
               profiler.recordTurnFirstAudio(turnNumberRef.current);
+
+              if (!currentSpeechIdRef.current) {
+                currentSpeechIdRef.current = voiceManager.startNewSpeech();
+              }
 
               // 🔒 Lock user input as soon as Gemini begins producing an answer
               if (!userInputLockedRef.current) {
@@ -580,7 +624,8 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
               playback.enqueueChunk(
                 pcm,
                 generationId ?? sessionRef.current?.currentGenerationId ?? 0,
-                turnNumberRef.current
+                turnNumberRef.current,
+                currentSpeechIdRef.current
               );
               // Track TTFA
               if (voiceStateRef.current === VoiceState.PROCESSING) {
@@ -594,6 +639,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
               const activeTurn = turnNumberRef.current;
               console.log(`[TURN ${activeTurn}] turnComplete`);
               geminiGenerationCompleteRef.current = true;
+              voiceManager.stopSpeaking();
 
               playback.markTurnComplete(
                 generationId ?? sessionRef.current?.currentGenerationId ?? 0,
@@ -612,24 +658,26 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
               // In case audio already finished (or 0 chunks received)
               checkConversationCompletion();
 
-              // Finalize assistant turn text
-              if (partialAssistantTextRef.current.trim()) {
-                setTurns((prev) => {
-                  const last = prev[prev.length - 1];
-                  if (last?.role === 'assistant' && last.isPartial) {
-                    return [
-                      ...prev.slice(0, -1),
-                      { ...last, isPartial: false, text: partialAssistantTextRef.current },
-                    ];
+              // Finalize assistant turn text and clean any empty/whitespace turns
+              const finalText = partialAssistantTextRef.current.trim();
+              setTurns((prev) => {
+                let updated = [...prev];
+                if (finalText) {
+                  const lastIdx = updated.length - 1;
+                  if (lastIdx >= 0 && updated[lastIdx]?.role === 'assistant' && updated[lastIdx].isPartial) {
+                    updated[lastIdx] = { ...updated[lastIdx], isPartial: false, text: finalText };
                   }
-                  return prev;
-                });
-                partialAssistantTextRef.current = '';
-              }
+                }
+                // Prune any assistant turns that have empty text
+                return updated.filter((t) => Boolean(t.text && t.text.trim()));
+              });
+              partialAssistantTextRef.current = '';
             },
             onInterrupted: () => {
-              // Barge-in disabled for strict turn-taking
-              console.log('[GeminiLive] Interrupted event ignored (strict turn-taking active)');
+              console.log('[GeminiLive] Interrupted event — stopping current speech and scroll');
+              voiceManager.interrupt();
+              playback.stopAll();
+              semanticScroll.cancelScrolling();
             },
             onToolCall: (toolCall) => {
               optionsRef.current.onToolCall?.(toolCall.name, toolCall.args);
@@ -652,15 +700,40 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
               }
             },
             onTranscript: (text, isUser, isPartial) => {
-              if (!text) return;
+              if (!text || !text.trim()) return;
               if (isUser) {
+                // User interrupt detection ("stop", "ruko", "bas")
+                const cleanLower = text.toLowerCase().trim();
+                if (
+                  cleanLower === 'stop' ||
+                  cleanLower === 'ruko' ||
+                  cleanLower === 'ruk jao' ||
+                  cleanLower === 'bas' ||
+                  cleanLower === 'pause' ||
+                  cleanLower.includes('stop speech')
+                ) {
+                  console.log('[useGeminiLive] User said STOP — cancelling speech and scrolling');
+                  voiceManager.interrupt();
+                  playback.stopAll();
+                  semanticScroll.cancelScrolling();
+                  updateState(VoiceState.LISTENING);
+                }
+                if (
+                  cleanLower.includes('back to benefits') ||
+                  cleanLower.includes('go to benefits') ||
+                  cleanLower.includes('fayde') ||
+                  cleanLower.includes('benefits dikhao')
+                ) {
+                  semanticScroll.scrollToSection('benefits', { reason: 'User requested to return to benefits' });
+                }
                 // Add user turn
+                const cleanUserText = text.trim();
                 setTurns((prev) => {
                   const last = prev[prev.length - 1];
                   if (last?.role === 'user' && isPartial) {
                     return [
                       ...prev.slice(0, -1),
-                      { ...last, text, isPartial: true },
+                      { ...last, text: cleanUserText, isPartial: true },
                     ];
                   }
                   return [
@@ -668,7 +741,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                     {
                       id: `user-${Date.now()}`,
                       role: 'user' as const,
-                      text,
+                      text: cleanUserText,
                       timestamp: Date.now(),
                       isPartial,
                     },
@@ -676,7 +749,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                 });
 
                 // Detect chosen language from user speech
-                const detected = detectLanguageFromText(text);
+                const detected = detectLanguageFromText(cleanUserText);
                 if (detected) {
                   console.log('[useGeminiLive] Detected language from user utterance:', detected.name);
                   const updated = updateProfile({
@@ -696,16 +769,41 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                 }
 
                 // Extract occupation or other profile details if mentioned
-                extractProfileUpdates(text);
+                extractProfileUpdates(cleanUserText);
               } else {
                 // Assistant turn
-                partialAssistantTextRef.current = text;
+                const cleanChunk = text.trim();
+                if (!cleanChunk) return;
+
+                let nextAsstText = text;
+                const prevAsstText = partialAssistantTextRef.current;
+                if (!prevAsstText) {
+                  nextAsstText = text.trim();
+                } else if (text.startsWith(prevAsstText)) {
+                  // Cumulative update from Gemini
+                  nextAsstText = text;
+                } else if (prevAsstText.endsWith(cleanChunk)) {
+                  // Duplicate chunk
+                  nextAsstText = prevAsstText;
+                } else {
+                  // Delta chunk
+                  nextAsstText = prevAsstText + (prevAsstText.endsWith(' ') || text.startsWith(' ') ? '' : ' ') + text;
+                }
+
+                partialAssistantTextRef.current = nextAsstText;
+
+                // Real-time synchronization: scroll page to section as AI speaks the topic
+                semanticScroll.handleSpokenTranscript(nextAsstText);
+
+                const trimmedDisplay = nextAsstText.trim();
+                if (!trimmedDisplay) return;
+
                 setTurns((prev) => {
                   const last = prev[prev.length - 1];
                   if (last?.role === 'assistant' && last.isPartial) {
                     return [
                       ...prev.slice(0, -1),
-                      { ...last, text, isPartial: true },
+                      { ...last, text: trimmedDisplay, isPartial: true },
                     ];
                   }
                   return [
@@ -713,7 +811,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                     {
                       id: `asst-${Date.now()}`,
                       role: 'assistant' as const,
-                      text,
+                      text: trimmedDisplay,
                       timestamp: Date.now(),
                       isPartial: true,
                     },
@@ -725,7 +823,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                   onboardingStateRef.current === OnboardingState.LANGUAGE_SELECTED ||
                   onboardingStateRef.current === OnboardingState.WAITING_FOR_LANGUAGE
                 ) {
-                  const detectedFromAsst = detectLanguageFromText(text);
+                  const detectedFromAsst = detectLanguageFromText(trimmedDisplay);
                   if (detectedFromAsst) {
                     const updated = updateProfile({
                       selectedLanguage: detectedFromAsst.name,
@@ -761,13 +859,26 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
     }
   }, [mic, playback, updateState, updateMetric, handleError, checkConversationCompletion, clearProcessingWatchdog, extractProfileUpdates]);
 
-  // ─── Reconnect Logic ───────────────────────────────────────
+  // ─── Reconnect Logic (Single-Chain Guarantee) ───────────────
   const scheduleReconnect = useCallback(() => {
+    if (isReconnectingRef.current) {
+      console.log('[useGeminiLive] Reconnect already in progress — ignoring duplicate trigger');
+      return;
+    }
+
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+
     if (reconnectCountRef.current >= MAX_RECONNECT_ATTEMPTS) {
+      isReconnectingRef.current = false;
       handleError('Connection lost. Please try again.');
       return;
     }
+
     reconnectCountRef.current += 1;
+    isReconnectingRef.current = true;
     updateState(VoiceState.RECONNECTING);
     setMetrics((prev) => ({
       ...prev,
@@ -775,10 +886,12 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
     }));
 
     const delay = RECONNECT_DELAY_MS * reconnectCountRef.current;
-    console.log(`[useGeminiLive] Reconnecting in ${delay}ms (attempt ${reconnectCountRef.current})`);
+    console.log(`[useGeminiLive] Single reconnect chain scheduled in ${delay}ms (attempt ${reconnectCountRef.current})`);
 
-    reconnectTimerRef.current = setTimeout(() => {
-      connect();
+    reconnectTimerRef.current = setTimeout(async () => {
+      isReconnectingRef.current = false;
+      reconnectTimerRef.current = null;
+      await connect();
     }, delay);
   }, [connect, handleError, updateState]);
   scheduleReconnectRef.current = scheduleReconnect;
@@ -811,6 +924,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
   // ─── Disconnect ────────────────────────────────────────────
   const disconnect = useCallback(() => {
     clearProcessingWatchdog();
+    isReconnectingRef.current = false;
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
@@ -828,6 +942,8 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
     sessionRef.current = null;
     clearCachedToken();
     playback.stopAll();
+    voiceManager.stopSpeaking();
+    semanticScroll.cancelScrolling();
     updateState(VoiceState.IDLE);
     setError(null);
 
@@ -845,6 +961,14 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
       const pDiag = playbackRef.current?.getDiagnostics?.();
       const mDiag = micRef.current?.getDiagnostics?.();
       const live = sessionRef.current;
+      const vDiag = voiceManager.getDiagnostics();
+
+      if (vDiag.activeAudioPlayers > 1) {
+        console.error(`GRAM SATHI: DUPLICATE AUDIO PLAYER DETECTED (count=${vDiag.activeAudioPlayers})`);
+      }
+      if (vDiag.activeSessions > 1) {
+        console.error(`GRAM SATHI: DUPLICATE VOICE SESSION DETECTED (count=${vDiag.activeSessions})`);
+      }
 
       setMetrics((prev) => ({
         ...prev,
@@ -852,6 +976,9 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
         sessionState: live?.connectionState ?? (live?.connected ? 'OPEN' : 'CLOSED'),
         lastMessageTime: live?.lastMessageTime ?? null,
         audioContextState: pDiag?.audioContextState ?? null,
+        activeSpeechId: vDiag.activeSpeechId,
+        activeAudioPlayers: vDiag.activeAudioPlayers,
+        activeSessions: vDiag.activeSessions,
         queueLength: pDiag?.queueLength ?? 0,
         activeSources: pDiag?.activeSources ?? 0,
         schedulerState: pDiag?.schedulerState ?? 'idle',

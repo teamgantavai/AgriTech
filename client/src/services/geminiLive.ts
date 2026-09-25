@@ -228,21 +228,21 @@ export class GeminiLiveSession {
     }
 
     // ── Output transcription (AI speech text) ─────────────
+    let assistantTextChunk = '';
     const outputT = message?.serverContent?.outputTranscription;
-    if (outputT?.text) {
-      this.events.onTranscript?.(outputT.text, false, !message?.serverContent?.turnComplete);
+    if (outputT?.text && outputT.text.trim()) {
+      assistantTextChunk = outputT.text;
+    } else if (message?.serverContent?.modelTurn?.parts) {
+      for (const part of message.serverContent.modelTurn.parts) {
+        if (part?.text && part.text.trim()) {
+          assistantTextChunk = part.text;
+          break;
+        }
+      }
     }
 
-    // ── Also handle text parts for transcript ─────────────
-    // NOTE: We check modelTurn.parts here ONLY for text, not for audio.
-    if (message?.serverContent?.modelTurn?.parts) {
-      for (const part of message.serverContent.modelTurn.parts) {
-        if (part.text) {
-          this.events.onTranscript?.(part.text, false, true);
-          break; // Only take first text part
-        }
-        // Intentionally skipping part.inlineData audio — handled exclusively via message.data above
-      }
+    if (assistantTextChunk) {
+      this.events.onTranscript?.(assistantTextChunk, false, !message?.serverContent?.turnComplete);
     }
 
     // ── Tool calls ────────────────────────────────────────

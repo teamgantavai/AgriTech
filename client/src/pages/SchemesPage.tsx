@@ -178,7 +178,7 @@ export function SchemesPage() {
             </div>
 
             {/* Search Input */}
-            <div className="w-full sm:w-80 relative">
+            <div data-ai-section="search" data-ai-title="Search Schemes" className="w-full sm:w-80 relative scroll-mt-24">
               <input
                 type="text"
                 value={searchQuery}
@@ -199,7 +199,7 @@ export function SchemesPage() {
           </div>
 
           {/* ── Category Filter Tabs ── */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+          <div data-ai-section="categories" data-ai-title="Scheme Categories" className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none scroll-mt-24">
             {CATEGORY_TABS.map((tab) => {
               const isSelected = activeCategory === tab.id;
               return (
@@ -222,7 +222,7 @@ export function SchemesPage() {
       </div>
 
       {/* ── Schemes Cards Grid ── */}
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-6">
+      <main data-ai-section="scheme-list" data-ai-title="Government Schemes" className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 scroll-mt-24">
         <div className="flex items-center justify-between mb-4">
           <p className="text-xs sm:text-sm text-slate-500 font-medium">
             Showing <strong className="text-slate-900">{filteredSchemes.length}</strong> verified government schemes

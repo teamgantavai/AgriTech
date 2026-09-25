@@ -3,10 +3,11 @@
 // Direct URL, shareable, bookmarkable, context-aware AI integration
 // ================================================================
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { getServiceById, type GovernmentServiceItem } from '../data/popularServices';
 import { setActiveServiceContext } from '../services/sessionManager';
+import { supportedPortalRegistry } from '../services/formCopilot/supportedPortalRegistry';
 
 export function ServiceDetailPage() {
   const { slug } = useParams<{ slug: string }>();
@@ -43,6 +44,22 @@ export function ServiceDetailPage() {
 
     if (foundLocal) {
       setService(foundLocal);
+      setActiveServiceContext({
+        id: foundLocal.id,
+        title: foundLocal.title,
+        category: foundLocal.category,
+        helpsWith: foundLocal.helpsWith,
+        source: foundLocal.source,
+        officialUrl: foundLocal.officialUrl,
+        sections: {
+          overview: foundLocal.whatIsIt || foundLocal.helpsWith,
+          benefits: foundLocal.whatYouGet?.join('; ') || '',
+          eligibility: foundLocal.whoCanGet?.join('; ') || '',
+          documents: foundLocal.whatPapers?.join('; ') || '',
+          application: foundLocal.howToApply?.join('; ') || '',
+          faq: foundLocal.officialUrl ? `Official portal: ${foundLocal.officialUrl}` : '',
+        },
+      });
       setLoading(false);
       return;
     }
@@ -70,6 +87,22 @@ export function ServiceDetailPage() {
           source: data.source || (isHi ? 'भारत सरकार' : 'Government of India'),
         };
         setService(mapped);
+        setActiveServiceContext({
+          id: mapped.id,
+          title: mapped.title,
+          category: mapped.category,
+          helpsWith: mapped.helpsWith,
+          source: mapped.source,
+          officialUrl: mapped.officialUrl,
+          sections: {
+            overview: mapped.whatIsIt || mapped.helpsWith,
+            benefits: mapped.whatYouGet?.join('; ') || '',
+            eligibility: mapped.whoCanGet?.join('; ') || '',
+            documents: mapped.whatPapers?.join('; ') || '',
+            application: mapped.howToApply?.join('; ') || '',
+            faq: mapped.officialUrl ? `Official portal: ${mapped.officialUrl}` : '',
+          },
+        });
         setLoading(false);
       })
       .catch(() => {
@@ -117,18 +150,27 @@ export function ServiceDetailPage() {
     });
   };
 
+  const matchedPortal = useMemo(() => {
+    if (!service) return null;
+    if (service.officialUrl) {
+      const validation = supportedPortalRegistry.validateUrl(service.officialUrl);
+      if (validation.portal) return validation.portal;
+    }
+    return supportedPortalRegistry.findPortalByKeyword(`${service.title} ${service.id} ${service.category}`);
+  }, [service]);
+
   // Loading Skeleton
   if (loading) {
     return (
       <div className="min-h-screen bg-[#fafaf9] text-slate-900">
-        <header className="border-b border-slate-200 bg-white px-4 sm:px-6 py-3">
+        <div className="border-b border-slate-200 bg-white px-4 sm:px-6 py-3">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
-            <Link to="/" className="text-xs font-bold text-slate-600 hover:text-green-700 flex items-center gap-1.5">
+            <Link to="/schemes" className="text-xs font-bold text-slate-600 hover:text-green-700 flex items-center gap-1.5">
               <span>←</span>
-              <span>Back to Services</span>
+              <span>Back to Schemes</span>
             </Link>
           </div>
-        </header>
+        </div>
 
         <main className="max-w-3xl mx-auto px-4 sm:px-6 py-10 space-y-6 animate-pulse">
           <div className="h-6 w-32 bg-slate-200 rounded-full" />
@@ -161,16 +203,16 @@ export function ServiceDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#fafaf9] text-slate-900 flex flex-col">
-      {/* ── Top Header ── */}
-      <header className="border-b border-slate-200 bg-white sticky top-0 z-20 px-4 sm:px-6 py-3">
+    <div className="min-h-full bg-[#fafaf9] text-slate-900 flex flex-col">
+      {/* ── Sub-Navigation / Breadcrumb Bar ── */}
+      <div className="border-b border-slate-200/80 bg-white/80 backdrop-blur-xs px-4 sm:px-6 py-2.5 flex-shrink-0">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <Link
-            to="/"
-            className="inline-flex items-center gap-2 text-xs sm:text-sm font-semibold text-slate-600 hover:text-green-700 transition-colors py-1.5 px-2 rounded-lg hover:bg-slate-50"
+            to="/schemes"
+            className="inline-flex items-center gap-2 text-xs sm:text-sm font-semibold text-slate-600 hover:text-green-700 transition-colors py-1 px-2.5 rounded-lg hover:bg-slate-100"
           >
-            <span className="text-base">←</span>
-            <span>{isHi ? 'सेवाओं पर वापस' : 'Back to Services'}</span>
+            <span className="text-sm">←</span>
+            <span>{isHi ? 'सभी योजनाएं (Schemes)' : 'Back to Schemes'}</span>
           </Link>
 
           <div className="flex items-center gap-3">
@@ -195,22 +237,19 @@ export function ServiceDetailPage() {
                 हिन्दी
               </button>
             </div>
-
-            <Link to="/" className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-green-600 flex items-center justify-center text-xs text-white">
-                🏛️
-              </div>
-              <span className="text-sm font-bold text-slate-900 hidden sm:inline">Gram Sathi</span>
-            </Link>
           </div>
         </div>
-      </header>
+      </div>
 
       {/* ── Main Content Container ── */}
       <main className="flex-1 max-w-3xl w-full mx-auto px-4 sm:px-6 py-8 sm:py-12 space-y-8">
 
         {/* ── Service Header ── */}
-        <div className="space-y-3">
+        <div
+          data-ai-section="overview"
+          data-ai-title={isHi ? 'योजना का परिचय' : 'Scheme Overview'}
+          className="space-y-3 scroll-mt-24"
+        >
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-block px-3 py-1 rounded-full text-xs font-bold bg-green-50 text-green-800 border border-green-200">
               {service.category}
@@ -245,6 +284,17 @@ export function ServiceDetailPage() {
             </div>
 
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-shrink-0">
+              {matchedPortal && (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/copilot/${matchedPortal.portalId}`)}
+                  className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-green-700 hover:from-emerald-700 hover:to-green-800 text-white text-xs sm:text-sm font-extrabold shadow-sm hover:shadow-md transition-all cursor-pointer active:scale-95 min-h-[44px]"
+                  title="Open Gram Sathi Form Copilot for official portal"
+                >
+                  <span className="text-amber-300">⚡</span>
+                  <span>{isHi ? 'फॉर्म कोपायलट से भरें' : 'Apply with Form Copilot'}</span>
+                </button>
+              )}
               <button
                 onClick={handleAskInChat}
                 className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-green-600 hover:bg-green-700 text-white text-xs sm:text-sm font-bold transition-all shadow-xs cursor-pointer active:scale-95 min-h-[44px]"
@@ -261,8 +311,12 @@ export function ServiceDetailPage() {
           </div>
         </div>
 
-        {/* ── Section: What is it? ── */}
-        <section className="bg-white rounded-3xl border border-slate-200/90 p-6 sm:p-7 shadow-xs space-y-3">
+        {/* ── Section: What is it? (Overview) ── */}
+        <section
+          data-ai-section="overview"
+          data-ai-title={isHi ? 'योजना का परिचय' : 'Scheme Overview'}
+          className="bg-white rounded-3xl border border-slate-200/90 p-6 sm:p-7 shadow-xs space-y-3 scroll-mt-24"
+        >
           <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
             <span>{isHi ? 'यह योजना क्या है?' : 'What is it?'}</span>
           </h2>
@@ -271,8 +325,12 @@ export function ServiceDetailPage() {
           </p>
         </section>
 
-        {/* ── Section: Who is it for? ── */}
-        <section className="bg-white rounded-3xl border border-slate-200/90 p-6 sm:p-7 shadow-xs space-y-3">
+        {/* ── Section: Who is it for? (Eligibility) ── */}
+        <section
+          data-ai-section="eligibility"
+          data-ai-title={isHi ? 'पात्रता नियम' : 'Eligibility Requirements'}
+          className="bg-white rounded-3xl border border-slate-200/90 p-6 sm:p-7 shadow-xs space-y-3 scroll-mt-24"
+        >
           <h2 className="text-base sm:text-lg font-bold text-slate-900">
             {isHi ? 'यह किसके लिए है?' : 'Who is it for?'}
           </h2>
@@ -286,7 +344,11 @@ export function ServiceDetailPage() {
         </section>
 
         {/* ── Section: What do you get? (Benefits) ── */}
-        <section className="bg-white rounded-3xl border border-slate-200/90 p-6 sm:p-7 shadow-xs space-y-4">
+        <section
+          data-ai-section="benefits"
+          data-ai-title={isHi ? 'योजना के लाभ' : 'Benefits & Assistance'}
+          className="bg-white rounded-3xl border border-slate-200/90 p-6 sm:p-7 shadow-xs space-y-4 scroll-mt-24"
+        >
           <h2 className="text-base sm:text-lg font-bold text-slate-900">
             {isHi ? 'आपको क्या लाभ मिलेगा?' : 'What do you get?'}
           </h2>
@@ -304,7 +366,11 @@ export function ServiceDetailPage() {
         </section>
 
         {/* ── Section: What do I need? (Documents) ── */}
-        <section className="bg-white rounded-3xl border border-slate-200/90 p-6 sm:p-7 shadow-xs space-y-3">
+        <section
+          data-ai-section="documents"
+          data-ai-title={isHi ? 'ज़रूरी दस्तावेज़' : 'Documents Required'}
+          className="bg-white rounded-3xl border border-slate-200/90 p-6 sm:p-7 shadow-xs space-y-3 scroll-mt-24"
+        >
           <h2 className="text-base sm:text-lg font-bold text-slate-900">
             {isHi ? 'कौन-से दस्तावेज़ चाहिए?' : 'What papers do I need?'}
           </h2>
@@ -317,8 +383,12 @@ export function ServiceDetailPage() {
           </ul>
         </section>
 
-        {/* ── Section: How to Apply (Step-by-Step Timeline) ── */}
-        <section className="bg-white rounded-3xl border border-slate-200/90 p-6 sm:p-7 shadow-xs space-y-5">
+        {/* ── Section: How to Apply (Application Timeline) ── */}
+        <section
+          data-ai-section="application"
+          data-ai-title={isHi ? 'आवेदन प्रक्रिया' : 'How to Apply'}
+          className="bg-white rounded-3xl border border-slate-200/90 p-6 sm:p-7 shadow-xs space-y-5 scroll-mt-24"
+        >
           <div>
             <h2 className="text-base sm:text-lg font-bold text-slate-900">
               {isHi ? 'आवेदन कैसे करें?' : 'How do I apply?'}
@@ -341,9 +411,44 @@ export function ServiceDetailPage() {
             ))}
           </div>
 
-          {/* Visit Official Website Button */}
+          {/* Form Copilot Assisted Application Banner */}
+          {matchedPortal && (
+            <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200/90 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-2xs">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-600 text-white text-[11px] font-extrabold uppercase tracking-wide">
+                    <span>⚡</span>
+                    <span>{isHi ? 'ग्राम साथी फ़ॉर्म कोपायलट' : 'Gram Sathi Form Copilot'}</span>
+                  </span>
+                  <span className="text-[11px] text-emerald-800 font-semibold">
+                    {matchedPortal.name}
+                  </span>
+                </div>
+                <p className="text-xs sm:text-sm text-slate-700 font-medium">
+                  {isHi
+                    ? 'अपनी सत्यापित ग्राम साथी प्रोफ़ाइल और दस्तावेज़ों का उपयोग करके इस आधिकारिक पोर्टल का फ़ॉर्म सुरक्षित और स्वचालित रूप से भरें।'
+                    : 'Intelligently prepare and fill this official government application using your verified profile and uploaded documents.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate(`/copilot/${matchedPortal.portalId}`)}
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-sm font-bold transition-all shadow-xs cursor-pointer active:scale-95 flex-shrink-0 min-h-[40px]"
+              >
+                <span>⚡</span>
+                <span>{isHi ? 'फ़ॉर्म भरना शुरू करें' : 'Start Form Copilot'}</span>
+                <span>→</span>
+              </button>
+            </div>
+          )}
+
+          {/* Visit Official Website Button / FAQ Section */}
           {service.officialUrl && (
-            <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div
+              data-ai-section="faq"
+              data-ai-title={isHi ? 'आधिकारिक पोर्टल' : 'Official Portal'}
+              className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 scroll-mt-24"
+            >
               <p className="text-xs text-slate-500">
                 {isHi ? 'आधिकारिक आवेदन सीधे संबंधित सरकारी विभाग के पोर्टल पर होते हैं।' : 'Official applications are hosted directly by the government department.'}
               </p>

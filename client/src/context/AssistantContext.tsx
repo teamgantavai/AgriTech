@@ -12,8 +12,38 @@ import { AgentStateMachine, AgentState, type ConfirmationRequest, type TaskProgr
 import { registerAppNavigator, updateUIState } from '../agent/agentBridge';
 import { eventBus, type AgentRealtimeEvent, type TimelineEntry } from '../services/eventBus';
 import { VOICE_TOOL_EVENT, type VoiceToolEvent, updateActiveFarmerContext } from '../services/toolManager';
-import { setFarmerContext, setActiveServiceContext, type SupportedLanguage, SUPPORTED_LANGUAGES } from '../services/sessionManager';
+import {
+  setFarmerContext,
+  setActiveServiceContext,
+  setProfileCollectionContext,
+  isProfileCollectionActive,
+  type SupportedLanguage,
+  SUPPORTED_LANGUAGES,
+} from '../services/sessionManager';
+import {
+  getProfile,
+  confirmProfileField,
+  rejectProfileField,
+  skipProfileField,
+} from '../services/profileService';
+import {
+  ProfileInterviewController,
+  getFriendlyFieldLabel,
+  formatFieldValueForCitizen,
+} from '../services/profileInterviewController';
+import type { CitizenProfile } from '../types/profile';
 import { prefetchToken } from '../services/tokenService';
+import { voiceManager } from '../services/VoiceSessionManager';
+import { semanticScroll } from '../services/semanticScroll';
+
+export interface ActiveDetectedField {
+  fieldName: string;
+  value: any;
+  status: 'CONFIRMING' | 'CONFIRMED' | 'REJECTED' | 'SKIPPED';
+  confidence: number;
+  confirmationPrompt?: string;
+  timestamp: number;
+}
 
 export type AssistantUIMode = 'minimized' | 'compact' | 'expanded';
 
@@ -60,7 +90,7 @@ export interface AssistantContextType {
   externalNav: { url: string; siteName: string } | null;
 
   // Actions
-  startVoice: (options?: { defaultMode?: AssistantUIMode; serviceContext?: any }) => Promise<void>;
+  startVoice: (options?: { defaultMode?: AssistantUIMode; serviceContext?: any; profileMode?: boolean }) => Promise<void>;
   stopVoice: () => void;
   retryVoice: () => Promise<void>;
   setLanguage: (lang: SupportedLanguage | null) => void;
@@ -68,6 +98,14 @@ export interface AssistantContextType {
   closeExternalNav: () => void;
   proceedExternalNav: () => void;
   clearAction: () => void;
+
+  // Profile Collection Mode
+  isProfileMode: boolean;
+  activeDetectedField: ActiveDetectedField | null;
+  startProfileCollection: (baselineProfile?: Partial<CitizenProfile>) => Promise<void>;
+  confirmDetectedField: (field: string, value: any) => Promise<void>;
+  rejectDetectedField: (field: string) => Promise<void>;
+  skipDetectedField: (field: string) => Promise<void>;
 }
 
 const AssistantContext = createContext<AssistantContextType | null>(null);
@@ -103,6 +141,11 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
   const [agentTask, setAgentTask] = useState<TaskProgress | null>(null);
   const [agentSources, setAgentSources] = useState<SourceInfo[]>([]);
   const [externalNav, setExternalNav] = useState<{ url: string; siteName: string } | null>(null);
+
+  // Profile Collection Mode state
+  const [activeDetectedField, setActiveDetectedField] = useState<ActiveDetectedField | null>(null);
+  const interviewControllerRef = useRef<ProfileInterviewController | null>(null);
+  const isProfileMode = isProfileCollectionActive();
 
   // Connect React Router navigate directly to agentBridge
   useEffect(() => {
@@ -282,6 +325,126 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
           break;
         }
 
+        case 'openFormCopilot': {
+          const pid = String(args.portalId || 'nsp').toUpperCase();
+          setLiveAction({
+            type: 'form',
+            status: 'in_progress',
+            target: `/copilot/${args.portalId || 'nsp'}`,
+            label: `Opening Government Form Copilot: ${pid}`,
+            icon: '⚡',
+            timestamp: now,
+          });
+          break;
+        }
+
+        case 'scroll_to_section': {
+          const section = String(args.section || 'section');
+          const reason = String(args.reason || '');
+          setLiveAction({
+            type: 'scroll',
+            status: 'completed',
+            target: section,
+            label: `Viewing ${section.charAt(0).toUpperCase() + section.slice(1)}`,
+            icon: '📜',
+            timestamp: now,
+          }, 2500);
+          break;
+        }
+
+        // ── Citizen Profile Collection Event Handlers (Section 5, 24) ─────────
+        case 'profile_extract_field': {
+          const fieldName = String(args.fieldName || '');
+          const value = args.value;
+          const confidence = Number(args.confidence || 0.95);
+          const friendly = getFriendlyFieldLabel(fieldName, 'en');
+          const formattedVal = formatFieldValueForCitizen(fieldName, value);
+          const confirmationPrompt = String(args.spokenConfirmation || `You said your ${friendly.toLowerCase()} is ${formattedVal}. Is that correct?`);
+
+          setActiveDetectedField({
+            fieldName,
+            value,
+            status: 'CONFIRMING',
+            confidence,
+            confirmationPrompt,
+            timestamp: now,
+          });
+
+          setLiveAction({
+            type: 'profile_detect',
+            status: 'waiting_confirmation',
+            label: `Please confirm ${friendly}: ${formattedVal}`,
+            icon: '🎙️',
+            timestamp: now,
+          }, 0);
+          break;
+        }
+
+        case 'profile_confirm_field': {
+          const fieldName = String(args.fieldName || '');
+          const value = args.value;
+          const friendly = getFriendlyFieldLabel(fieldName, 'en');
+          const formattedVal = formatFieldValueForCitizen(fieldName, value);
+
+          setActiveDetectedField({
+            fieldName,
+            value,
+            status: 'CONFIRMED',
+            confidence: 1.0,
+            timestamp: now,
+          });
+
+          setLiveAction({
+            type: 'profile_confirm',
+            status: 'completed',
+            label: `✓ Saved ${friendly}: ${formattedVal}`,
+            icon: '✅',
+            timestamp: now,
+          }, 4000);
+          break;
+        }
+
+        case 'profile_reject_field': {
+          const fieldName = String(args.fieldName || '');
+          const friendly = getFriendlyFieldLabel(fieldName, 'en');
+          setActiveDetectedField(null);
+
+          setLiveAction({
+            type: 'profile_reject',
+            status: 'failed',
+            label: `Please provide your ${friendly.toLowerCase()} again`,
+            icon: '✎',
+            timestamp: now,
+          }, 3000);
+          break;
+        }
+
+        case 'profile_skip_field': {
+          const fieldName = String(args.fieldName || '');
+          const friendly = getFriendlyFieldLabel(fieldName, 'en');
+          setActiveDetectedField(null);
+
+          setLiveAction({
+            type: 'profile_skip',
+            status: 'completed',
+            label: `Skipped ${friendly}`,
+            icon: '⏭️',
+            timestamp: now,
+          }, 2500);
+          break;
+        }
+
+        case 'profile_verify_summary': {
+          setLiveAction({
+            type: 'profile_verify',
+            status: 'in_progress',
+            label: 'Verifying stored profile details',
+            icon: '📋',
+            timestamp: now,
+          }, 4000);
+          break;
+        }
+
         default:
           break;
       }
@@ -370,7 +533,35 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
 
   // Start voice assistant
   const startVoice = useCallback(
-    async (options?: { defaultMode?: AssistantUIMode; serviceContext?: any }) => {
+    async (options?: { defaultMode?: AssistantUIMode; serviceContext?: any; profileMode?: boolean }) => {
+      const isProfileRoute = Boolean(
+        location.pathname === '/profile' ||
+        options?.profileMode ||
+        (typeof window !== 'undefined' && window.location.pathname.includes('/profile'))
+      );
+
+      if (isProfileRoute) {
+        let baseline: Partial<CitizenProfile> = {};
+        try {
+          const p = await getProfile();
+          if (p) baseline = p;
+        } catch {
+          // continue with empty baseline
+        }
+        const controller = new ProfileInterviewController(baseline);
+        interviewControllerRef.current = controller;
+        const nextStep = controller.getNextStep();
+
+        setProfileCollectionContext({
+          active: true,
+          currentField: nextStep ? String(nextStep.field) : 'full_name',
+          currentFieldLabel: nextStep ? nextStep.label : 'Full Name',
+          currentFieldQuestion: nextStep ? nextStep.spokenHindiQuestion : 'Sabse pehle, aapka poora naam kya hai?',
+          completedFields: [],
+          remainingFields: ['full_name', 'date_of_birth', 'gender', 'mobile', 'state', 'district', 'village_city', 'pin_code', 'address', 'occupation', 'highest_qualification', 'category', 'annual_family_income'],
+        });
+      }
+
       if (options?.serviceContext) {
         setActiveServiceContext(options.serviceContext);
       }
@@ -384,7 +575,147 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
       });
       await connect();
     },
-    [connect]
+    [connect, location.pathname]
+  );
+
+  // Trigger Profile Collection Mode (Section 1, 2, 3, 20)
+  const startProfileCollection = useCallback(async (baselineProfile?: Partial<CitizenProfile>) => {
+    const controller = new ProfileInterviewController(baselineProfile || {});
+    interviewControllerRef.current = controller;
+
+    const nextStep = controller.getNextStep();
+    if (!nextStep) {
+      setLiveAction({
+        type: 'profile_complete',
+        status: 'completed',
+        label: '✓ Your profile is already complete!',
+        icon: '🎉',
+        timestamp: Date.now(),
+      }, 4000);
+      return;
+    }
+
+    const intro = controller.getIntroductoryMessage('hi');
+
+    setProfileCollectionContext({
+      active: true,
+      currentField: String(nextStep.field),
+      currentFieldLabel: nextStep.label,
+      currentFieldQuestion: nextStep.spokenHindiQuestion,
+      introGreeting: `${intro.greeting} ${intro.questionText}`,
+      completedFields: [],
+      remainingFields: [],
+    });
+
+    if (location.pathname !== '/profile') {
+      navigate('/profile');
+    }
+    await startVoice({ defaultMode: 'expanded', profileMode: true });
+  }, [location.pathname, navigate, startVoice]);
+
+  // Touch confirmation actions (Section 21, 22: Optimistic UI & non-blocking background persistence)
+  const confirmDetectedField = useCallback(
+    async (field: string, value: any) => {
+      const friendly = getFriendlyFieldLabel(field, 'en');
+      const formatted = formatFieldValueForCitizen(field, value);
+
+      // 1. Instant Optimistic UI Update (Section 22)
+      setActiveDetectedField({
+        fieldName: field,
+        value,
+        status: 'CONFIRMED',
+        confidence: 1.0,
+        timestamp: Date.now(),
+      });
+
+      setLiveAction({
+        type: 'profile_confirm',
+        status: 'completed',
+        label: `✓ Saved ${friendly}: ${formatted}`,
+        icon: '✅',
+        timestamp: Date.now(),
+      }, 3500);
+
+      // 2. Advance Interview Controller to next field (Section 20)
+      if (interviewControllerRef.current) {
+        interviewControllerRef.current.confirmField(field, value);
+        const nextStep = interviewControllerRef.current.getNextStep();
+        if (nextStep) {
+          setProfileCollectionContext({
+            active: true,
+            currentField: String(nextStep.field),
+            currentFieldLabel: nextStep.label,
+            currentFieldQuestion: nextStep.spokenHindiQuestion,
+          });
+        } else {
+          setProfileCollectionContext({ active: false });
+        }
+      }
+
+      // 3. Background Database Persistence (Section 21: Non-blocking)
+      confirmProfileField(field as any, value, 'voice', 1.0).catch((err) => {
+        console.warn('Background profile save warning:', err);
+      });
+    },
+    [setLiveAction]
+  );
+
+  const rejectDetectedField = useCallback(
+    async (field: string) => {
+      const friendly = getFriendlyFieldLabel(field, 'en');
+      setActiveDetectedField(null);
+
+      setLiveAction({
+        type: 'profile_reject',
+        status: 'failed',
+        label: `Please provide your ${friendly.toLowerCase()} again`,
+        icon: '✎',
+        timestamp: Date.now(),
+      }, 3000);
+
+      // Background rejection recording
+      rejectProfileField(field as any, 'User tapped change').catch((err) => {
+        console.warn('Background reject warning:', err);
+      });
+    },
+    [setLiveAction]
+  );
+
+  const skipDetectedField = useCallback(
+    async (field: string) => {
+      const friendly = getFriendlyFieldLabel(field, 'en');
+      setActiveDetectedField(null);
+
+      setLiveAction({
+        type: 'profile_skip',
+        status: 'completed',
+        label: `Skipped ${friendly}`,
+        icon: '⏭️',
+        timestamp: Date.now(),
+      }, 2500);
+
+      // Advance interview controller past this skipped field
+      if (interviewControllerRef.current) {
+        interviewControllerRef.current.skipField(field);
+        const nextStep = interviewControllerRef.current.getNextStep();
+        if (nextStep) {
+          setProfileCollectionContext({
+            active: true,
+            currentField: String(nextStep.field),
+            currentFieldLabel: nextStep.label,
+            currentFieldQuestion: nextStep.spokenHindiQuestion,
+          });
+        } else {
+          setProfileCollectionContext({ active: false });
+        }
+      }
+
+      // Background skip recording
+      skipProfileField(field as any).catch((err) => {
+        console.warn('Background skip warning:', err);
+      });
+    },
+    [setLiveAction]
   );
 
   // Auto-start voice if start=true query param or /voice path
@@ -402,6 +733,8 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
   // Stop voice assistant
   const stopVoice = useCallback(() => {
     disconnect();
+    voiceManager.interrupt();
+    semanticScroll.cancelScrolling();
     setIsOpen(false);
     setAnalyserData(null);
     setMicRms(0);
@@ -478,6 +811,12 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
       closeExternalNav,
       proceedExternalNav,
       clearAction,
+      isProfileMode,
+      activeDetectedField,
+      startProfileCollection,
+      confirmDetectedField,
+      rejectDetectedField,
+      skipDetectedField,
     }),
     [
       isOpen,
@@ -513,6 +852,12 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
       closeExternalNav,
       proceedExternalNav,
       clearAction,
+      isProfileMode,
+      activeDetectedField,
+      startProfileCollection,
+      confirmDetectedField,
+      rejectDetectedField,
+      skipDetectedField,
     ]
   );
 

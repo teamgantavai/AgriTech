@@ -104,6 +104,14 @@ export interface ActiveServiceContext {
   helpsWith?: string;
   source?: string;
   officialUrl?: string;
+  sections?: {
+    overview?: string;
+    benefits?: string;
+    eligibility?: string;
+    documents?: string;
+    application?: string;
+    faq?: string;
+  };
 }
 
 export function setActiveServiceContext(ctx: ActiveServiceContext | null): void {
@@ -117,6 +125,48 @@ export function getActiveServiceContext(): ActiveServiceContext | null {
     return (window as any).__gram_service_ctx || null;
   }
   return null;
+}
+
+export interface ProfileCollectionContext {
+  active: boolean;
+  currentField: string;
+  currentFieldLabel?: string;
+  currentFieldQuestion?: string;
+  introGreeting?: string;
+  completedFields: string[];
+  remainingFields: string[];
+  lastDetected?: { field: string; value: any; status: string; confidence: number };
+}
+
+let activeProfileContext: ProfileCollectionContext = {
+  active: false,
+  currentField: 'full_name',
+  currentFieldLabel: 'Full Name',
+  currentFieldQuestion: 'Sabse pehle, aapka poora naam kya hai?',
+  introGreeting: '',
+  completedFields: [],
+  remainingFields: ['full_name', 'date_of_birth', 'gender', 'mobile', 'state', 'district', 'village_city', 'pin_code', 'address', 'occupation', 'highest_qualification', 'category', 'annual_family_income'],
+};
+
+export function setProfileCollectionContext(ctx: Partial<ProfileCollectionContext>) {
+  activeProfileContext = { ...activeProfileContext, ...ctx };
+  if (typeof window !== 'undefined') {
+    (window as any).__gram_profile_ctx = activeProfileContext;
+  }
+}
+
+export function getProfileCollectionContext(): ProfileCollectionContext {
+  if (typeof window !== 'undefined' && (window as any).__gram_profile_ctx) {
+    return (window as any).__gram_profile_ctx;
+  }
+  return activeProfileContext;
+}
+
+export function isProfileCollectionActive(): boolean {
+  if (typeof window !== 'undefined' && (window as any).__gram_profile_ctx?.active) {
+    return true;
+  }
+  return activeProfileContext.active;
 }
 
 export interface SupportedLanguage {
@@ -175,6 +225,17 @@ export function detectLanguageFromText(text: string): SupportedLanguage | null {
     return SUPPORTED_LANGUAGES.find((l) => l.code === 'pa') || null;
   }
   if (lower.includes('how can i help you') || lower.includes('how may i help you')) {
+    return SUPPORTED_LANGUAGES.find((l) => l.code === 'en') || null;
+  }
+
+  // 3. Spoken Latin / Roman script words (Auto-detecting language from user speech transcript)
+  if (/\b(mera|meri|mere|naam|aapka|aapki|aapke|kya|hai|haan|nahi|main|hum|kaise|batayein|karo|bharo|yojana|kisan|madad|namaste|pranam|shukriya|sabse|pehle)\b/i.test(clean)) {
+    return SUPPORTED_LANGUAGES.find((l) => l.code === 'hi') || null;
+  }
+  if (/\b(sat\s+sri\s+akal|tussi|tuhada|tuhadi|daso|chahida|kiddan|hanji)\b/i.test(clean)) {
+    return SUPPORTED_LANGUAGES.find((l) => l.code === 'pa') || null;
+  }
+  if (/\b(my|i|am|name|what|is|are|you|how|can|help|tell|me|scheme|profile|form|please|hello|hi|good|morning|evening|yes|no|fill|complete)\b/i.test(clean)) {
     return SUPPORTED_LANGUAGES.find((l) => l.code === 'en') || null;
   }
 
@@ -322,40 +383,49 @@ export function buildSystemInstruction(profile: SessionProfile): string {
       l.code.toLowerCase() === profile.languageCode?.toLowerCase()
   );
 
-  // Flow instructions based on whether language has been selected or not
+  const profileCtx = getProfileCollectionContext();
+  const isOnProfilePage = Boolean(
+    profileCtx.active ||
+    (typeof window !== 'undefined' && window.location.pathname.includes('/profile'))
+  );
+
+  // Dynamic Auto-Detect Flow Instructions (Gram Sathi automatically detects spoken language)
   let flowInstruction = '';
 
-  if (selectedLangObj) {
-    flowInstruction = `GREETING & CONVERSATION MODE:
-The user's selected language is ${selectedLangObj.name} (${selectedLangObj.nativeName}).
-When the session begins, provide ONLY the short requested greeting in ${selectedLangObj.name}.
-Do NOT ask which language they would like to use.
-After the greeting is spoken, wait for the user to speak.
-Then continue the normal conversation directly in ${selectedLangObj.name}.
-Keep responses concise, natural, warm and brief (2-5 seconds for greetings).
-Do not repeat introductory greetings or monologues once conversation is underway.
-If the user intentionally asks to change language (e.g. "Let's speak English"), seamlessly switch to that language.`;
+  if (isOnProfilePage) {
+    flowInstruction = `CITIZEN PROFILE INTERVIEW CONVERSATION FLOW (AUTO-DETECT LANGUAGE):
+The citizen is on the Gram Sathi Profile page (/profile).
+STEP 1: WELCOMING GREETING & QUESTION #1:
+When the voice session begins, greet the citizen warmly with a natural greeting and ask for their full name:
+"नमस्ते! Welcome to Gram Sathi. I am here to help you complete your profile. What is your full name? / आपका पूरा नाम क्या है?"
+
+AUTO-DETECT CITIZEN'S LANGUAGE IN REAL-TIME:
+- Listen to whatever language the citizen speaks.
+- If the citizen speaks Hindi ("मेरा नाम राहुल है" or "राहुल शर्मा"): Auto-detect Hindi and conduct the rest of the interview entirely in Hindi!
+- If the citizen speaks English ("My name is Rahul" or "Rahul Sharma"): Auto-detect English and conduct the rest of the interview entirely in English!
+- If the citizen speaks Punjabi, Marathi, Gujarati, Bengali, Telugu, Tamil, or any other Indian language: Auto-detect it and respond in that exact language!
+- NEVER interrupt or ask "Which language do you want to speak in?". Auto-detect the language from their spoken answer and continue naturally!
+
+STEP 2: SEQUENTIAL PROFILE DETAIL INTERVIEW:
+After the user states each detail:
+1. Immediately call 'profile_extract_field' with the exact value so the form fills up on screen in real time.
+2. Ask for quick confirmation in their language: e.g. "आपने कहा कि आपका पूरा नाम राहुल शर्मा है। क्या यह सही है?" (or "You said your full name is Rahul Sharma. Is that correct?").
+3. When confirmed ("हाँ", "yes", "sahi hai"): call 'profile_confirm_field' and ask the next field in sequence.`;
   } else {
-    flowInstruction = `MANDATORY FIRST-TIME ONBOARDING FLOW:
-At the beginning of a new voice conversation where no language has yet been selected, ask the short language question:
-"नमस्ते! आप कौन सी भाषा में बात करना चाहते हैं? Which language would you like to speak in?"
-
-Wait for the user's answer.
-
-Once the language is determined, respond in that language with the short greeting:
-"नमस्ते! मैं सहकार साथी हूँ। बताइए, मैं आपकी कैसे मदद करूँ?" (or native equivalent).
-
-Do not ask for occupation, name, age, or other profile information during the initial language onboarding unless the user provides it voluntarily.
-
-If the user starts asking a question instead (e.g. "Tell me about PM Kisan"):
-Infer the user's language from their speech, adopt that language, and answer their question directly in that language without forcing them to repeat the language question.
-
-After language onboarding is complete, have a normal natural conversation.`;
+    flowInstruction = `DYNAMIC LANGUAGE AUTO-DETECTION MODE (CRITICAL):
+1. AUTOMATICALLY DETECT LANGUAGE: You MUST automatically detect the language the citizen is speaking in from their words, phrasing, or script, and respond in that exact same language!
+2. NEVER ask "Which language do you want to speak in?". Never force the citizen to choose a language.
+3. If the user begins speaking in Hindi, speak in Hindi. If they speak in English, speak in English. If Punjabi, speak Punjabi.
+4. If the session has just started and the user has not spoken yet:
+   Provide a brief, warm bilingual greeting:
+   "नमस्ते! Hello! I am Gram Sathi. How can I assist you today? / बताइए, मैं आपकी कैसे मदद करूँ?"
+   Then wait for the user to speak, and adapt to whatever language they use.
+5. If the user switches languages mid-conversation (e.g. from English to Hindi or Hindi to English), seamlessly switch to their new language without any interruption or commentary.`;
   }
 
-  const languagePrompt = selectedLangObj
-    ? `MANDATORY SPOKEN LANGUAGE: The user has selected ${selectedLangObj.name} (${selectedLangObj.nativeName}). You MUST generate your spoken response entirely in ${selectedLangObj.name} (${selectedLangObj.nativeName}). Use natural native phrasing, authentic vocabulary, and clear conversational pronunciation in ${selectedLangObj.name}. If the user explicitly asks you to speak in another language, seamlessly adapt to that requested language.`
-    : `NATIVE MULTILINGUAL INTELLIGENCE: You understand and speak all 14 Indian languages fluently: Hindi, Punjabi, English, Marathi, Gujarati, Bengali, Telugu, Tamil, Kannada, Malayalam, Odia, Assamese, Urdu, and Hinglish. Always listen carefully to the user's spoken language and respond in that exact same language.`;
+  const languagePrompt = `REAL-TIME MULTILINGUAL AUTO-DETECTION (MANDATORY):
+You are equipped with real-time automatic language detection across all Indian languages: Hindi, English, Punjabi, Marathi, Gujarati, Bengali, Telugu, Tamil, Kannada, Malayalam, Odia, Assamese, Urdu, and Hinglish.
+Always listen carefully to the user's speech and auto-detect their language dynamically. Generate your spoken responses in the user's language with natural accent, authentic phrasing, and concise clarity.`;
 
   const occupationNote = profile.occupation
     ? buildOccupationContext(profile.occupation)
@@ -384,25 +454,107 @@ CROP CALENDAR TOOL RULES:
 
   const serviceCtx = getActiveServiceContext();
   const serviceContext = serviceCtx && serviceCtx.title ? `
-CURRENT ACTIVE SERVICE IN FOCUS:
+CURRENT ACTIVE SERVICE IN FOCUS & STRUCTURED SCHEME KNOWLEDGE:
 The user is currently viewing the dedicated page for this government service:
-- Scheme Title: ${serviceCtx.title}
+- Scheme ID: ${serviceCtx.id || 'current'}
+- Scheme Name: ${serviceCtx.title}
 - Category: ${serviceCtx.category || 'Government Scheme'}
 - Description: ${serviceCtx.helpsWith || ''}
 - Official Portal: ${serviceCtx.officialUrl || ''}
 - Department / Source: ${serviceCtx.source || 'Government of India'}
 
-IMPORTANT FOR THIS SERVICE:
-When the user asks questions such as:
-- "Can I get this?" / "क्या मुझे यह मिल सकता है?"
-- "What documents do I need?" / "कौन से दस्तावेज़ चाहिए?"
-- "How do I apply?" / "आवेदन कैसे करें?"
-- "What is the benefit?" / "क्या फायदा होगा?"
-- "Tell me about this scheme" / "मुझे इस योजना के बारे में बताओ"
-They are asking specifically about "${serviceCtx.title}". Always prioritize this service and answer directly without asking "Which service are you talking about?".
+PAGE SECTION REGISTRY (SECTIONS VISIBLE ON USER'S SCREEN):
+- "overview": ${serviceCtx.sections?.overview || serviceCtx.helpsWith || 'Scheme overview and mission'}
+- "benefits": ${serviceCtx.sections?.benefits || 'Financial assistance and key benefits'}
+- "eligibility": ${serviceCtx.sections?.eligibility || 'Eligibility criteria and who can get it'}
+- "documents": ${serviceCtx.sections?.documents || 'Required documents and paperwork'}
+- "application": ${serviceCtx.sections?.application || 'How to apply and application process'}
+- "faq": ${serviceCtx.sections?.faq || 'Official portal link and guidelines'}
+
+SCHEME-AWARE VOICE SCROLLING & SPEECH SYNCHRONIZATION RULES (CRITICAL):
+1. AUTOMATIC SYNCHRONIZED SCROLLING:
+   When the user asks you to explain the scheme (e.g. "PM-KISAN samjhao", "Explain this scheme", "is scheme ke baare mein batao", "what is this?"):
+   You MUST guide the user step-by-step through the points while calling 'scroll_to_section' as you introduce each section, so the user SEES the page scrolling in real-time as you speak!
+   
+   Execute this semantic sequence:
+   - Call scroll_to_section({ section: "overview", behavior: "smooth", reason: "Explaining scheme overview" }) → Speak: short overview of the scheme.
+   - Call scroll_to_section({ section: "benefits", behavior: "smooth", reason: "Explaining benefits" }) → Speak: main financial benefits and support provided.
+   - Call scroll_to_section({ section: "eligibility", behavior: "smooth", reason: "Explaining eligibility" }) → Speak: eligibility conditions.
+   - Call scroll_to_section({ section: "documents", behavior: "smooth", reason: "Explaining required documents" }) → Speak: required documents.
+   - Call scroll_to_section({ section: "application", behavior: "smooth", reason: "Explaining application process" }) → Speak: how and where to apply.
+
+2. SPECIFIC SECTION QUERIES:
+   - If user asks about benefits ("kya fayda milega?"): call scroll_to_section({ section: "benefits", behavior: "smooth" }) and explain benefits.
+   - If user asks about eligibility ("kaun patra hai?"): call scroll_to_section({ section: "eligibility", behavior: "smooth" }) and explain eligibility.
+   - If user asks about papers/documents ("kaunse documents?"): call scroll_to_section({ section: "documents", behavior: "smooth" }) and list the documents.
+   - If user asks about applying ("apply kaise karein?"): call scroll_to_section({ section: "application", behavior: "smooth" }) and explain steps.
+   - If user says "Go back to benefits" or "fayde fir se dikhao": call scroll_to_section({ section: "benefits", behavior: "smooth" }).
+
+3. AVOID RANDOM OR EXCESSIVE SCROLLING:
+   Only scroll when switching to a different section. Do not scroll multiple times for the same section.
+   The page scroll and AI speech must be synchronized. Call the scroll tool at the start of the section discussion.
+
+4. USER INTERRUPTS:
+   If the user says "Stop", stop talking immediately.
+` : '';
+
+  const profileModeInstruction = isOnProfilePage ? `
+====================================================================
+GRAM SATHI CITIZEN PROFILE INTERVIEW MODE (PAGE: /profile)
+====================================================================
+The citizen is currently on the Gram Sathi Profile page (/profile).
+Your primary task is to help the citizen complete and verify their official citizen profile.
+
+MANDATORY STEP 1: WELCOMING GREETING & AUTO-DETECT LANGUAGE:
+As soon as the session begins on the profile page, greet the citizen with a short natural welcoming greeting and ask for their full name:
+"नमस्ते! Welcome to Gram Sathi. I am here to help you complete your profile. What is your full name? / आपका पूरा नाम क्या है?"
+
+AUTO-DETECT CITIZEN'S LANGUAGE:
+- Listen to whatever language the citizen speaks.
+- If the citizen speaks Hindi ("मेरा नाम राहुल शर्मा है" or "राहुल शर्मा"): Auto-detect Hindi and conduct the entire interview in Hindi!
+- If the citizen speaks English ("My name is Rahul Sharma" or "Rahul Sharma"): Auto-detect English and conduct the interview in English!
+- If the citizen speaks Punjabi, Marathi, Gujarati, etc.: Auto-detect and conduct the interview in that language!
+- DO NOT stop to interrogate about language; auto-detect the language from their speech!
+
+MANDATORY STEP 2: SEQUENTIAL PROFILE DETAILS INTERVIEW:
+Ask for one detail at a time in this order. Do not skip or ask multiple questions at once:
+1. Full Name (पूरा नाम) -> fieldName: "full_name"
+2. Date of Birth (जन्म तिथि) -> fieldName: "date_of_birth"
+3. Gender (लिंग: Male / Female / Other) -> fieldName: "gender"
+4. Mobile Number (10 अंकों का मोबाइल नंबर) -> fieldName: "mobile"
+5. State (राज्य) -> fieldName: "state"
+6. District (ज़िला) -> fieldName: "district"
+7. City or Village (गाँव या शहर) -> fieldName: "village_city"
+8. PIN Code (6 अंकों का पिन कोड) -> fieldName: "pin_code"
+9. Complete Street Address (पूरा पता) -> fieldName: "address"
+10. Occupation (व्यवसाय: किसान / छात्र / नौकरी / आदि) -> fieldName: "occupation"
+11. Highest Qualification (उच्चतम शिक्षा: 10वीं / 12वीं / ग्रेजुएट / आदि) -> fieldName: "highest_qualification"
+12. Social Category (वर्ग: General / OBC / SC / ST / EWS) -> fieldName: "category"
+13. Annual Family Income (वार्षिक पारिवारिक आय) -> fieldName: "annual_family_income"
+
+MANDATORY STEP 3: AUTOMATIC FORM FILLING VIA TOOLS:
+Whenever the citizen provides an answer:
+1. IMMEDIATELY call the tool 'profile_extract_field':
+   profile_extract_field({
+     fieldName: "<fieldName>",
+     value: "<extracted_value>",
+     spokenConfirmation: "Aapne kaha ki aapka <field_label> <extracted_value> hai. Kya ye sahi hai?"
+   })
+   This causes the form on the citizen's screen to IMMEDIATELY fill up and display in real time!
+2. Then speak clearly: "Aapne kaha ki aapka <field_label> <extracted_value> hai. Kya ye sahi hai?"
+3. If the citizen agrees ("haan", "yes", "sahi hai"):
+   Call 'profile_confirm_field({ fieldName: "<fieldName>", value: "<extracted_value>" })'.
+   Say: "बहुत बढ़िया, सुरक्षित हो गया!" and immediately ask the next question in sequence.
+4. If the citizen corrects ("nahi", "no", or gives a different answer):
+   Call 'profile_reject_field({ fieldName: "<fieldName>", reason: "Citizen correction" })'.
+   Gently ask for the corrected value.
+5. If the citizen says "skip" / "baad mein":
+   Call 'profile_skip_field({ fieldName: "<fieldName>" })' and move to the next field.
 ` : '';
 
   return `You are gram Sathi (सहकार साथी) / Gram Sathi (ग्राम साथी), a trusted, friendly, and highly knowledgeable AI voice assistant dedicated to ALL Indian citizens, with comprehensive access to ALL government schemes, citizen services, student scholarships, education, farming, loans, welfare programs, and the live internet.
+
+${profileModeInstruction}
 
 ${serviceContext}
 
@@ -457,8 +609,14 @@ AGENT-CONTROL TOOL GUIDANCE (Phase 1):
 - fillField: Use ONLY when user explicitly says their information should be entered in a form (e.g. "mera naam Rahul hai form mein bhar do"). NEVER fill fields without user saying to do so.
 - requestConfirmation: ALWAYS call this before any form submission or consequential action. Never skip this step.
 - openExternalService: Use when user wants to visit an official portal like NSP, PM-KISAN, PMFBY. Only use .gov.in or .nic.in URLs.
+- open_form_copilot: CRITICAL CAPABILITY for official government form filling!
+  * When user says: "Is scholarship ka form bhar do", "Mujhe is scholarship ke liye apply karna hai", "Gram Sathi is government form ko meri profile se bhar do", "scholarship form bharo", "PM-KISAN form bharo", or "Form Copilot kholo":
+  * Immediately answer warmly: "Main official portal par aapka application form prepare karne ke liye Gram Sathi Form Copilot khol raha hoon. Main aapki verified profile aur documents ko match karke pehle aapko review screen dikhaunga."
+  * Immediately call tool: open_form_copilot({ portalId: "nsp", schemeName: "scholarship" }) (use "pm-kisan" for PM Kisan, "kcc" for Kisan Credit Card).
+  * This safely opens the official government portal, inspects the form fields, maps verified profile and documents, and presents the Pre-fill Review screen for citizen review before visible realtime filling.
 
 TOOL CALLING GUIDANCE:
+- For filling official government forms or scholarships, use 'open_form_copilot'.
 - For specific government schemes, use 'searchScheme' or 'navigateToScheme'.
 - For live web search, student queries, entrance exams, or recent updates, use 'searchInternet'.
 - For crop calendar questions (what to sow, grow, harvest), use 'getCropCalendar'.

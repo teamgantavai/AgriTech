@@ -11,6 +11,8 @@ import { SchemesPage } from './pages/SchemesPage';
 import { CropCalendarPage } from './pages/CropCalendarPage';
 import { ChatPage } from './pages/ChatPage';
 import { ServiceDetailPage } from './pages/ServiceDetailPage';
+import { ProfilePage } from './pages/ProfilePage';
+import { FormCopilotPage } from './pages/FormCopilotPage';
 
 export default function App() {
   return (
@@ -21,6 +23,13 @@ export default function App() {
             {/* Citizen Portal Home */}
             <Route path="/" element={<HomePage />} />
             <Route path="/home" element={<HomePage />} />
+
+            {/* Citizen Profile System */}
+            <Route path="/profile" element={<ProfilePage />} />
+
+            {/* Government Website Form Copilot (Task 2) */}
+            <Route path="/copilot" element={<FormCopilotPage />} />
+            <Route path="/copilot/:portalId" element={<FormCopilotPage />} />
 
             {/* Voice Landing triggers voice overlay while showing home portal */}
             <Route path="/voice" element={<HomePage />} />

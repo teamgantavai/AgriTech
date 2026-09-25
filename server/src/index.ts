@@ -1,16 +1,18 @@
-import express from 'express';
-import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+
+import express from 'express';
+import cors from 'cors';
 import { chatRouter } from './routes/chat';
 import { liveTokenRouter } from './routes/liveToken';
 import { schemesRouter } from './routes/schemes';
 import { cropCalendarRouter } from './routes/cropCalendar';
 import { searchRouter } from './routes/search';
 import { agentRouter } from './agent/agentController';
+import { profileRouter } from './routes/profile';
+import { formCopilotRouter } from './routes/formCopilot';
 import { initKnowledgeBase, getKBStats } from './services/knowledgeBase';
-
-dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -48,6 +50,8 @@ async function bootstrap() {
   app.use('/api/crop-calendar', cropCalendarRouter);
   app.use('/api/search', searchRouter);
   app.use('/api/agent', agentRouter);
+  app.use('/api/profile', profileRouter);
+  app.use('/api/form-copilot', formCopilotRouter);
 
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });

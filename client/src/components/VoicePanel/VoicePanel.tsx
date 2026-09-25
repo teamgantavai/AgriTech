@@ -163,10 +163,8 @@ export function VoicePanel({
     subtitleText = getLocalizedStateLabel(VoiceState.AI_SPEAKING, langCode);
   } else if (voiceState === VoiceState.PROCESSING) {
     subtitleText = getLocalizedStateLabel(VoiceState.PROCESSING, langCode);
-  } else if (onboardingState === OnboardingState.LANGUAGE_QUESTION) {
-    subtitleText = 'Which language would you like to speak in?';
-  } else if (onboardingState === OnboardingState.WAITING_FOR_LANGUAGE) {
-    subtitleText = 'Which language would you like to speak in? (Hindi, Punjabi, English...)';
+  } else if (onboardingState === OnboardingState.LANGUAGE_QUESTION || onboardingState === OnboardingState.WAITING_FOR_LANGUAGE) {
+    subtitleText = 'Auto-detecting language... Speak in any language (Hindi, English, Punjabi...)';
   } else if (voiceState === VoiceState.PREPARING) {
     subtitleText = 'Preparing voice pipeline...';
   } else if (voiceState === VoiceState.RECOVERING) {

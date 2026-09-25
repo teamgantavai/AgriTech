@@ -49,7 +49,7 @@ export function useMicrophone(options: MicrophoneOptions) {
 
   const vad = useVoiceActivity({
     threshold: 0.012,
-    silenceMs: 380, // Fast end-of-speech detection
+    silenceMs: 500, // Natural conversational pause before end-of-speech
     activityMs: 100,
     onSpeechStart: () => optionsRef.current.onSpeechStart?.(),
     onSpeechEnd: () => optionsRef.current.onSpeechEnd?.(),

@@ -1,12 +1,19 @@
 // ============================================================
 // Tool Manager — Maps Gemini tool calls to website actions
 // ============================================================
-
 import type { ToolCallRequest, ToolCallResponse } from '../types/voice';
 import type { GeminiTool } from '../types/session';
 import { callAgentAction, executeClientAction } from '../agent/agentBridge';
 import { AgentStateMachine, AgentState } from '../agent/agentStateMachine';
 import { loadProfile } from './sessionManager';
+import { semanticScroll } from './semanticScroll';
+import {
+  updateProfileField,
+  confirmProfileField,
+  rejectProfileField,
+  skipProfileField,
+  getProfile,
+} from './profileService';
 
 // Custom event name for tool-driven navigation
 export const VOICE_TOOL_EVENT = 'voice:tool';
@@ -16,44 +23,14 @@ export interface VoiceToolEvent {
   args: Record<string, unknown>;
 }
 
-const SEARCH_SPOKEN_ANNOUNCEMENTS: Record<string, string> = {
-  hi: 'मैं इंटरनेट पर जानकारी देख रहा हूँ, एक क्षण रुकिए...',
-  pa: 'ਮੈਂ ਇੰਟਰਨੈੱਟ \'ਤੇ ਜਾਣਕਾਰੀ ਲੱਭ ਰਿਹਾ ਹਾਂ, ਇੱਕ ਪਲ ਰੁਕੋ...',
-  en: 'I am searching the internet for you, please wait a moment...',
-  'hi-latn': 'Main internet par search kar raha hoon, ek second...',
-  mr: 'मी इंटरनेटवर माहिती शोधत आहे, एक क्षण थांबा...',
-  bn: 'আমি ইন্টারনেটে তথ্য খুঁজছি, অনুগ্রহ করে একটু অপেক্ষা করুন...',
-  gu: 'હું ઇન્ટરનેટ પર માહિતી શોધી રહ્યો છું, એક ક્ષણ રાહ જુઓ...',
-  ta: 'நான் இணையத்தில் தேடுகிறேன், சிறிது நேரம் காத்திருங்கள்...',
-  te: 'నేను ఇంటర్నెట్‌లో వెతుకుతున్నాను, దయచేసి ఒక్క క్షణం వేచి ఉండండి...',
-  kn: 'ನಾನು ಅಂತರ್ಜಾಲದಲ್ಲಿ ಹುಡುಕುತ್ತಿದ್ದೇನೆ, ದಯವಿಟ್ಟು ಒಂದು ಕ್ಷಣ ಕಾಯಿರಿ...',
-  ml: 'ഞാൻ ഇൻ്റർനെറ്റിൽ തിരയുകയാണ്, ദയവായി ഒരു നിമിഷം കാത്തിരിക്കൂ...',
-  or: 'ମୁଁ ଇଣ୍ଟରନେଟ୍ ରେ ତଥ୍ୟ ଖୋଜୁଛି, ଗୋଟିଏ ମୁହୂର୍ତ୍ତ ଅପେକ୍ଷା କରନ୍ତୁ...',
-  ur: 'میں انٹرنیٹ پر تلاش کر رہا ہوں، ایک لمحہ انتظار کیجیے...',
-};
-
 /**
- * Speaks an immediate search announcement in the citizen's language
- * so they are immediately informed while web retrieval runs.
+ * Announcement helper — dispatched as an event so UI can display status toast.
+ * Native speechSynthesis is strictly disabled to prevent duplicate AI voices.
+ * Voice is produced natively and exclusively by the Gemini Live Web Audio pipeline.
  */
-export function speakSearchAnnouncement(customLang?: string) {
-  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-    try {
-      const p = loadProfile();
-      const lang = (customLang || p.languageCode || 'hi').toLowerCase();
-      const text = SEARCH_SPOKEN_ANNOUNCEMENTS[lang] || SEARCH_SPOKEN_ANNOUNCEMENTS['hi'];
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 1.05;
-      utterance.pitch = 1.0;
-      if (lang === 'hi') utterance.lang = 'hi-IN';
-      else if (lang === 'pa') utterance.lang = 'pa-IN';
-      else if (lang === 'en') utterance.lang = 'en-IN';
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(utterance);
-    } catch {
-      // SpeechSynthesis may fail in silent contexts, ignore
-    }
-  }
+export function speakSearchAnnouncement(_customLang?: string) {
+  // Native speechSynthesis is intentionally disabled to strictly guarantee:
+  // activeTTSStreams <= 1 and activeAudioElements <= 1.
 }
 
 
@@ -255,20 +232,39 @@ export async function executeToolCall(
         return { id, result: { success: false, error: 'Scheme not found' } };
       }
 
+      case 'scroll_to_section': {
+        const section = String(args.section || 'overview');
+        const behavior = (args.behavior as ScrollBehavior) || 'smooth';
+        const reason = String(args.reason || 'Explaining scheme section');
+        const scrollResult = semanticScroll.scrollToSection(section, { behavior, reason });
+        dispatchToolEvent('scroll_to_section', { reason, ...scrollResult });
+        return {
+          id,
+          result: {
+            success: scrollResult.success,
+            section: scrollResult.section,
+            message: scrollResult.message,
+          },
+        };
+      }
+
       case 'showDocuments': {
         const schemeId = String(args.schemeId || '');
+        semanticScroll.scrollToSection('documents', { reason: 'Showing required documents' });
         dispatchToolEvent('showDocuments', { schemeId });
         return { id, result: { success: true, schemeId } };
       }
 
       case 'showEligibility': {
         const schemeId = String(args.schemeId || '');
+        semanticScroll.scrollToSection('eligibility', { reason: 'Showing eligibility requirements' });
         dispatchToolEvent('showEligibility', { schemeId });
         return { id, result: { success: true, schemeId } };
       }
 
       case 'openApplication': {
         const schemeId = String(args.schemeId || '');
+        semanticScroll.scrollToSection('application', { reason: 'Showing application process' });
         dispatchToolEvent('openApplication', { schemeId });
         return { id, result: { success: true, schemeId } };
       }
@@ -340,6 +336,132 @@ export async function executeToolCall(
         dispatchToolEvent('openExternalService', { url, siteName });
         AgentStateMachine.emitExternalNavigation(url, siteName);
         return { id, result: { success: true, url, siteName, requiresBoundaryWarning: true } };
+      }
+
+      // ── Citizen Profile Collection Mode Tools ───────────────
+      case 'profile_extract_field': {
+        const fieldName = String(args.fieldName || '');
+        const value = args.value;
+        const confidence = typeof args.confidence === 'number' ? args.confidence : 0.95;
+        const spokenConfirmation = String(args.spokenConfirmation || '');
+        dispatchToolEvent('profile_extract_field', { fieldName, value, confidence, spokenConfirmation });
+        await updateProfileField(fieldName as any, value, 'CONFIRMING', 'voice', confidence);
+        return {
+          id,
+          result: {
+            success: true,
+            fieldName,
+            value,
+            status: 'CONFIRMING',
+            confidence,
+            confirmationPrompt: spokenConfirmation,
+          },
+        };
+      }
+
+      case 'profile_confirm_field': {
+        const fieldName = String(args.fieldName || '');
+        const value = args.value;
+        dispatchToolEvent('profile_confirm_field', { fieldName, value });
+        const updated = await confirmProfileField(fieldName as any, value, 'voice', 1.0);
+        return {
+          id,
+          result: {
+            success: true,
+            fieldName,
+            value,
+            status: 'CONFIRMED',
+            completionPercentage: updated.completion_percentage,
+          },
+        };
+      }
+
+      case 'profile_reject_field': {
+        const fieldName = String(args.fieldName || '');
+        const reason = String(args.reason || 'User rejected detected value');
+        dispatchToolEvent('profile_reject_field', { fieldName, reason });
+        await rejectProfileField(fieldName as any, reason);
+        return {
+          id,
+          result: {
+            success: true,
+            fieldName,
+            status: 'REJECTED',
+            reason,
+          },
+        };
+      }
+
+      case 'profile_skip_field': {
+        const fieldName = String(args.fieldName || '');
+        dispatchToolEvent('profile_skip_field', { fieldName });
+        await skipProfileField(fieldName as any);
+        return {
+          id,
+          result: {
+            success: true,
+            fieldName,
+            status: 'SKIPPED',
+          },
+        };
+      }
+
+      case 'profile_verify_summary': {
+        dispatchToolEvent('profile_verify_summary', args);
+        const profile = await getProfile();
+        return {
+          id,
+          result: {
+            success: true,
+            profileSummary: {
+              fullName: profile.full_name,
+              dateOfBirth: profile.date_of_birth,
+              state: profile.state,
+              district: profile.district,
+              occupation: profile.occupation,
+              qualification: profile.highest_qualification,
+              completion: profile.completion_percentage,
+            },
+          },
+        };
+      }
+
+      case 'open_form_copilot': {
+        const rawPortal = (args.portalId ? String(args.portalId).trim() : 'nsp').toLowerCase();
+        const schemeQuery = args.schemeName ? String(args.schemeName).toLowerCase() : '';
+        let portalId = 'nsp';
+        if (rawPortal.includes('kisan') || schemeQuery.includes('kisan')) portalId = 'pm-kisan';
+        else if (rawPortal.includes('kcc') || schemeQuery.includes('kcc') || schemeQuery.includes('credit')) portalId = 'kcc';
+        else portalId = 'nsp';
+
+        const targetRoute = `/copilot/${portalId}`;
+        executeClientAction({
+          type: 'navigate',
+          params: { route: targetRoute },
+        });
+        dispatchToolEvent('openFormCopilot', { portalId, targetRoute, schemeName: args.schemeName });
+        return {
+          id,
+          result: {
+            success: true,
+            portalId,
+            route: targetRoute,
+            message: `Opening the official government portal (${portalId === 'nsp' ? 'National Scholarship Portal' : portalId.toUpperCase()}). Gram Sathi is preparing your verified profile information and matching documents for review before filling.`,
+          },
+        };
+      }
+
+      case 'control_form_browser': {
+        const action = String(args.action || 'scrollDown');
+        window.dispatchEvent(new CustomEvent('gs_browser_command', { detail: { action } }));
+        return {
+          id,
+          result: {
+            success: true,
+            action,
+            message: `Executed browser command: ${action}`,
+          },
+        };
       }
 
       default:
@@ -423,6 +545,31 @@ export const VOICE_TOOLS: GeminiTool[] = [
             },
           },
           required: ['schemeId'],
+        },
+      },
+      {
+        name: 'scroll_to_section',
+        description:
+          'Smoothly scroll the webpage to a specific section while speaking/explaining it to the user. Call this tool immediately when explaining a topic that belongs to another section (such as overview, benefits, eligibility, documents, application, faq) so the citizen can see the relevant section on their screen in real-time while you speak.',
+        parameters: {
+          type: 'object',
+          properties: {
+            section: {
+              type: 'string',
+              description:
+                'The semantic section name: "overview", "benefits", "eligibility", "documents", "application", or "faq".',
+            },
+            behavior: {
+              type: 'string',
+              description: 'Scroll behavior, set to "smooth".',
+            },
+            reason: {
+              type: 'string',
+              description:
+                'Why you are scrolling to this section (e.g. "Explaining scheme benefits", "Explaining eligibility requirements").',
+            },
+          },
+          required: ['section'],
         },
       },
       {
@@ -590,6 +737,110 @@ export const VOICE_TOOLS: GeminiTool[] = [
             siteName: { type: 'string', description: 'Human-readable name e.g. "National Scholarship Portal" or "PM-KISAN Portal"' },
           },
           required: ['url', 'siteName'],
+        },
+      },
+      // ── Gram Sathi Citizen Profile Collection Tools ─────────
+      {
+        name: 'profile_extract_field',
+        description: 'Extract a citizen profile field from natural speech. Marks state as CONFIRMING and prompts user for explicit confirmation before persisting. Use whenever user provides a field during profile creation.',
+        parameters: {
+          type: 'object',
+          properties: {
+            fieldName: {
+              type: 'string',
+              description: 'Profile field identifier: full_name, date_of_birth, gender, mobile, email, state, district, sub_district, village_city, pin_code, address, highest_qualification, course, institution, passing_year, occupation, category, annual_family_income, farmer_land_details, farmer_crops, farmer_irrigation, farmer_type',
+            },
+            value: {
+              type: 'string',
+              description: 'Extracted value. Preserve names and spelling exactly as provided.',
+            },
+            confidence: {
+              type: 'number',
+              description: 'Confidence score between 0.0 and 1.0 based on clarity of user speech.',
+            },
+            spokenConfirmation: {
+              type: 'string',
+              description: 'Natural spoken confirmation question in user language, e.g. "Aapne kaha ki aapka naam Dilkhush Jha hai. Kya ye sahi hai?"',
+            },
+          },
+          required: ['fieldName', 'value'],
+        },
+      },
+      {
+        name: 'profile_confirm_field',
+        description: 'Confirm and securely persist a profile field value into the database after explicit citizen agreement (e.g. citizen says yes, haan, sahi hai).',
+        parameters: {
+          type: 'object',
+          properties: {
+            fieldName: { type: 'string', description: 'The field name to confirm' },
+            value: { type: 'string', description: 'The confirmed value to persist' },
+          },
+          required: ['fieldName', 'value'],
+        },
+      },
+      {
+        name: 'profile_reject_field',
+        description: 'Reject a detected profile value when the user says no, nahi, or provides a correction, and re-ask the question.',
+        parameters: {
+          type: 'object',
+          properties: {
+            fieldName: { type: 'string', description: 'The field name rejected or being corrected' },
+            reason: { type: 'string', description: 'Reason for rejection' },
+          },
+          required: ['fieldName'],
+        },
+      },
+      {
+        name: 'profile_skip_field',
+        description: 'Skip an optional or unknown profile field when the citizen says skip, pata nahi, or I don\'t know. Never ask repeatedly.',
+        parameters: {
+          type: 'object',
+          properties: {
+            fieldName: { type: 'string', description: 'Field name to skip' },
+          },
+          required: ['fieldName'],
+        },
+      },
+      {
+        name: 'profile_verify_summary',
+        description: 'Verify stored profile values by reading important stored fields in logical groups when citizen asks "mera profile verify karo".',
+        parameters: {
+          type: 'object',
+          properties: {
+            notes: { type: 'string', description: 'Optional verification notes' },
+          },
+        },
+      },
+      // ── Gram Sathi Government Form Copilot ──────────────────
+      {
+        name: 'open_form_copilot',
+        description: 'Open the Gram Sathi Government Form Copilot to assist the citizen in filling an official government application form (e.g. National Scholarship Portal NSP, PM-KISAN, Kisan Credit Card KCC) using their verified profile and documents. Trigger whenever user says "Is scholarship ka form bhar do", "form bharna shuru karo", "apply for scholarship", "form copilot kholo", or "Gram Sathi is form ko meri profile se bhar do".',
+        parameters: {
+          type: 'object',
+          properties: {
+            portalId: {
+              type: 'string',
+              description: 'Target portal identifier: "nsp" (for National Scholarship Portal / छात्रवृत्ति), "pm-kisan" (for PM-KISAN), or "kcc" (for Kisan Credit Card). Default is "nsp" for scholarships.',
+            },
+            schemeName: {
+              type: 'string',
+              description: 'Optional name of the scheme/scholarship mentioned by the user.',
+            },
+          },
+        },
+      },
+      {
+        name: 'control_form_browser',
+        description: 'Control the live government website browser session during Form Copilot. Trigger when user says "scroll down", "neeche scroll karo", "scroll up", "upar scroll karo", "go back", "peechhe jao", "refresh page", "stop", "ruk jao", "detect form", or "form detect karo".',
+        parameters: {
+          type: 'object',
+          properties: {
+            action: {
+              type: 'string',
+              description: 'The browser control action: "scrollDown", "scrollUp", "goBack", "reload", "stop", "inspect", or "startFilling".',
+            },
+          },
+          required: ['action'],
         },
       },
     ],

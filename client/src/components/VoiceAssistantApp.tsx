@@ -200,6 +200,10 @@ export function VoiceAssistantApp({ defaultTab = 'chat' }: VoiceAssistantAppProp
         case 'openExternalService':
           msg = `🔗 Opening: ${args.siteName}`;
           break;
+        case 'openFormCopilot':
+          msg = `⚡ Opening Form Copilot: ${String(args.portalId || 'nsp').toUpperCase()}`;
+          AgentStateMachine.forceTransition(AgentState.EXECUTING);
+          break;
         default:
           msg = `Action: ${tool}`;
       }
