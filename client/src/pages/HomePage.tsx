@@ -52,9 +52,10 @@ export function HomePage() {
           {/* Quick Voice Launch CTA */}
           <div className="flex flex-wrap items-center justify-center gap-3 w-full mb-8">
             <button
-              onClick={() => startVoice({ defaultMode: 'compact' })}
+              onClick={() => startVoice({ defaultMode: 'expanded' })}
               className="flex items-center gap-2.5 px-6 py-3.5 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-bold rounded-full shadow-lg shadow-emerald-500/30 transition-all text-sm sm:text-base cursor-pointer"
             >
+
               <span className="text-lg">🎙️</span>
               <span>Talk to Gram Sathi</span>
             </button>

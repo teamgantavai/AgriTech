@@ -10,7 +10,7 @@ const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes local client cache
 
 let activeAbortController: AbortController | null = null;
 
-const STATE_STORAGE_KEY = 'sahkar_sathi_selected_state';
+const STATE_STORAGE_KEY = 'gram_sathi_selected_state';
 const DEFAULT_STATE = 'Rajasthan';
 
 /**

@@ -11,7 +11,7 @@ interface CachedToken {
 let memoryTokenCache: CachedToken | null = null;
 let inflightTokenPromise: Promise<{ token: string; model: string }> | null = null;
 
-const STORAGE_KEY = 'sahkar_sathi_ephemeral_token';
+const STORAGE_KEY = 'gram_sathi_ephemeral_token';
 
 export function clearCachedToken(): void {
   memoryTokenCache = null;

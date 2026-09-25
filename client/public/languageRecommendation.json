@@ -1,20 +1,20 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "version": "1.0.0",
-  "title": "Sahkar Sathi Language Recommendation & Conversion Engine",
+  "title": "gram Sathi Language Recommendation & Conversion Engine",
   "description": "Configuration rules, mappings, and UI prompts to automatically detect and convert the website to the user's recommended Indian language.",
   "metadata": {
-    "appName": "Sahkar Sathi",
+    "appName": "gram Sathi",
     "appNativeName": "सहकार साथी",
     "defaultLanguage": "en",
     "fallbackLanguage": "hi",
     "totalLanguagesSupported": 14,
     "storageKeys": {
       "preferredLanguage": "language",
-      "legacyLanguage": "sahkar_preferred_language",
-      "recommendationDismissed": "sahkar_lang_recommendation_dismissed",
-      "userRole": "sahkar_user_role",
-      "autoConverted": "sahkar_lang_auto_converted"
+      "legacyLanguage": "gram_preferred_language",
+      "recommendationDismissed": "gram_lang_recommendation_dismissed",
+      "userRole": "gram_user_role",
+      "autoConverted": "gram_lang_auto_converted"
     }
   },
   "conversionDirectives": {
@@ -231,57 +231,296 @@
     "hi-latn": "hi-Latn"
   },
   "indianStateMappings": {
-    "punjab": { "primary": "pa", "secondary": "hi", "name": "Punjab", "nameHi": "पंजाब" },
-    "chandigarh": { "primary": "pa", "secondary": "hi", "name": "Chandigarh", "nameHi": "चंडीगढ़" },
-    "maharashtra": { "primary": "mr", "secondary": "hi", "name": "Maharashtra", "nameHi": "महाराष्ट्र" },
-    "goa": { "primary": "mr", "secondary": "en", "name": "Goa", "nameHi": "गोवा" },
-    "gujarat": { "primary": "gu", "secondary": "hi", "name": "Gujarat", "nameHi": "गुजरात" },
-    "dadra and nagar haveli and daman and diu": { "primary": "gu", "secondary": "hi", "name": "Dadra & Nagar Haveli and Daman & Diu", "nameHi": "दादरा और नगर हवेली और दमन और दीव" },
-    "west bengal": { "primary": "bn", "secondary": "en", "name": "West Bengal", "nameHi": "पश्चिम बंगाल" },
-    "tripura": { "primary": "bn", "secondary": "en", "name": "Tripura", "nameHi": "त्रिपुरा" },
-    "tamil nadu": { "primary": "ta", "secondary": "en", "name": "Tamil Nadu", "nameHi": "தமிழ்நாடு" },
-    "puducherry": { "primary": "ta", "secondary": "en", "name": "Puducherry", "nameHi": "पुडुचेरी" },
-    "andhra pradesh": { "primary": "te", "secondary": "en", "name": "Andhra Pradesh", "nameHi": "आंध्र प्रदेश" },
-    "telangana": { "primary": "te", "secondary": "ur", "name": "Telangana", "nameHi": "तेलंगाना" },
-    "karnataka": { "primary": "kn", "secondary": "en", "name": "Karnataka", "nameHi": "कर्नाटक" },
-    "kerala": { "primary": "ml", "secondary": "en", "name": "Kerala", "nameHi": "केरल" },
-    "lakshadweep": { "primary": "ml", "secondary": "en", "name": "Lakshadweep", "nameHi": "लक्षद्वीप" },
-    "odisha": { "primary": "or", "secondary": "hi", "name": "Odisha", "nameHi": "ओडिशा" },
-    "assam": { "primary": "as", "secondary": "bn", "name": "Assam", "nameHi": "असम" },
-    "jammu and kashmir": { "primary": "ur", "secondary": "hi", "name": "Jammu & Kashmir", "nameHi": "जम्मू और कश्मीर" },
-    "ladakh": { "primary": "ur", "secondary": "hi", "name": "Ladakh", "nameHi": "लद्दाख" },
-    "uttar pradesh": { "primary": "hi", "secondary": "ur", "name": "Uttar Pradesh", "nameHi": "उत्तर प्रदेश" },
-    "bihar": { "primary": "hi", "secondary": "ur", "name": "Bihar", "nameHi": "बिहार" },
-    "madhya pradesh": { "primary": "hi", "secondary": "en", "name": "Madhya Pradesh", "nameHi": "मध्य प्रदेश" },
-    "rajasthan": { "primary": "hi", "secondary": "en", "name": "Rajasthan", "nameHi": "राजस्थान" },
-    "haryana": { "primary": "hi", "secondary": "pa", "name": "Haryana", "nameHi": "हरियाणा" },
-    "delhi": { "primary": "hi", "secondary": "en", "name": "Delhi", "nameHi": "दिल्ली" },
-    "himachal pradesh": { "primary": "hi", "secondary": "en", "name": "Himachal Pradesh", "nameHi": "हिमाचल प्रदेश" },
-    "uttarakhand": { "primary": "hi", "secondary": "en", "name": "Uttarakhand", "nameHi": "उत्तराखंड" },
-    "chhattisgarh": { "primary": "hi", "secondary": "en", "name": "Chhattisgarh", "nameHi": "छत्तीसगढ़" },
-    "jharkhand": { "primary": "hi", "secondary": "bn", "name": "Jharkhand", "nameHi": "झारखंड" },
-    "meghalaya": { "primary": "en", "secondary": "as", "name": "Meghalaya", "nameHi": "मेघालय" },
-    "mizoram": { "primary": "en", "secondary": "hi", "name": "Mizoram", "nameHi": "मिजोरम" },
-    "manipur": { "primary": "en", "secondary": "hi", "name": "Manipur", "nameHi": "मणिपुर" },
-    "nagaland": { "primary": "en", "secondary": "hi", "name": "Nagaland", "nameHi": "नागालैंड" },
-    "sikkim": { "primary": "hi", "secondary": "en", "name": "Sikkim", "nameHi": "सिक्किम" },
-    "arunachal pradesh": { "primary": "hi", "secondary": "en", "name": "Arunachal Pradesh", "nameHi": "अरुणाचल प्रदेश" }
+    "punjab": {
+      "primary": "pa",
+      "secondary": "hi",
+      "name": "Punjab",
+      "nameHi": "पंजाब"
+    },
+    "chandigarh": {
+      "primary": "pa",
+      "secondary": "hi",
+      "name": "Chandigarh",
+      "nameHi": "चंडीगढ़"
+    },
+    "maharashtra": {
+      "primary": "mr",
+      "secondary": "hi",
+      "name": "Maharashtra",
+      "nameHi": "महाराष्ट्र"
+    },
+    "goa": {
+      "primary": "mr",
+      "secondary": "en",
+      "name": "Goa",
+      "nameHi": "गोवा"
+    },
+    "gujarat": {
+      "primary": "gu",
+      "secondary": "hi",
+      "name": "Gujarat",
+      "nameHi": "गुजरात"
+    },
+    "dadra and nagar haveli and daman and diu": {
+      "primary": "gu",
+      "secondary": "hi",
+      "name": "Dadra & Nagar Haveli and Daman & Diu",
+      "nameHi": "दादरा और नगर हवेली और दमन और दीव"
+    },
+    "west bengal": {
+      "primary": "bn",
+      "secondary": "en",
+      "name": "West Bengal",
+      "nameHi": "पश्चिम बंगाल"
+    },
+    "tripura": {
+      "primary": "bn",
+      "secondary": "en",
+      "name": "Tripura",
+      "nameHi": "त्रिपुरा"
+    },
+    "tamil nadu": {
+      "primary": "ta",
+      "secondary": "en",
+      "name": "Tamil Nadu",
+      "nameHi": "தமிழ்நாடு"
+    },
+    "puducherry": {
+      "primary": "ta",
+      "secondary": "en",
+      "name": "Puducherry",
+      "nameHi": "पुडुचेरी"
+    },
+    "andhra pradesh": {
+      "primary": "te",
+      "secondary": "en",
+      "name": "Andhra Pradesh",
+      "nameHi": "आंध्र प्रदेश"
+    },
+    "telangana": {
+      "primary": "te",
+      "secondary": "ur",
+      "name": "Telangana",
+      "nameHi": "तेलंगाना"
+    },
+    "karnataka": {
+      "primary": "kn",
+      "secondary": "en",
+      "name": "Karnataka",
+      "nameHi": "कर्नाटक"
+    },
+    "kerala": {
+      "primary": "ml",
+      "secondary": "en",
+      "name": "Kerala",
+      "nameHi": "केरल"
+    },
+    "lakshadweep": {
+      "primary": "ml",
+      "secondary": "en",
+      "name": "Lakshadweep",
+      "nameHi": "लक्षद्वीप"
+    },
+    "odisha": {
+      "primary": "or",
+      "secondary": "hi",
+      "name": "Odisha",
+      "nameHi": "ओडिशा"
+    },
+    "assam": {
+      "primary": "as",
+      "secondary": "bn",
+      "name": "Assam",
+      "nameHi": "असम"
+    },
+    "jammu and kashmir": {
+      "primary": "ur",
+      "secondary": "hi",
+      "name": "Jammu & Kashmir",
+      "nameHi": "जम्मू और कश्मीर"
+    },
+    "ladakh": {
+      "primary": "ur",
+      "secondary": "hi",
+      "name": "Ladakh",
+      "nameHi": "लद्दाख"
+    },
+    "uttar pradesh": {
+      "primary": "hi",
+      "secondary": "ur",
+      "name": "Uttar Pradesh",
+      "nameHi": "उत्तर प्रदेश"
+    },
+    "bihar": {
+      "primary": "hi",
+      "secondary": "ur",
+      "name": "Bihar",
+      "nameHi": "बिहार"
+    },
+    "madhya pradesh": {
+      "primary": "hi",
+      "secondary": "en",
+      "name": "Madhya Pradesh",
+      "nameHi": "मध्य प्रदेश"
+    },
+    "rajasthan": {
+      "primary": "hi",
+      "secondary": "en",
+      "name": "Rajasthan",
+      "nameHi": "राजस्थान"
+    },
+    "haryana": {
+      "primary": "hi",
+      "secondary": "pa",
+      "name": "Haryana",
+      "nameHi": "हरियाणा"
+    },
+    "delhi": {
+      "primary": "hi",
+      "secondary": "en",
+      "name": "Delhi",
+      "nameHi": "दिल्ली"
+    },
+    "himachal pradesh": {
+      "primary": "hi",
+      "secondary": "en",
+      "name": "Himachal Pradesh",
+      "nameHi": "हिमाचल प्रदेश"
+    },
+    "uttarakhand": {
+      "primary": "hi",
+      "secondary": "en",
+      "name": "Uttarakhand",
+      "nameHi": "उत्तराखंड"
+    },
+    "chhattisgarh": {
+      "primary": "hi",
+      "secondary": "en",
+      "name": "Chhattisgarh",
+      "nameHi": "छत्तीसगढ़"
+    },
+    "jharkhand": {
+      "primary": "hi",
+      "secondary": "bn",
+      "name": "Jharkhand",
+      "nameHi": "झारखंड"
+    },
+    "meghalaya": {
+      "primary": "en",
+      "secondary": "as",
+      "name": "Meghalaya",
+      "nameHi": "मेघालय"
+    },
+    "mizoram": {
+      "primary": "en",
+      "secondary": "hi",
+      "name": "Mizoram",
+      "nameHi": "मिजोरम"
+    },
+    "manipur": {
+      "primary": "en",
+      "secondary": "hi",
+      "name": "Manipur",
+      "nameHi": "मणिपुर"
+    },
+    "nagaland": {
+      "primary": "en",
+      "secondary": "hi",
+      "name": "Nagaland",
+      "nameHi": "नागालैंड"
+    },
+    "sikkim": {
+      "primary": "hi",
+      "secondary": "en",
+      "name": "Sikkim",
+      "nameHi": "सिक्किम"
+    },
+    "arunachal pradesh": {
+      "primary": "hi",
+      "secondary": "en",
+      "name": "Arunachal Pradesh",
+      "nameHi": "अरुणाचल प्रदेश"
+    }
   },
   "spokenKeywords": {
-    "hi": ["hindi", "हिन्दी", "हिंदी", "hindee", "hindustani"],
-    "en": ["english", "inglish", "अंग्रेजी", "angreji"],
-    "hi-Latn": ["hinglish", "hymglish", "हिंग्लिश", "roman hindi"],
-    "pa": ["punjabi", "panjabi", "ਪੰਜਾਬੀ", "पंजाबी"],
-    "mr": ["marathi", "मराठी", "marathi bhasha"],
-    "gu": ["gujarati", "ગુજરાતી", "गुजराती"],
-    "bn": ["bengali", "bangla", "বাংলা", "बंगाली"],
-    "ta": ["tamil", "தமிழ்", "तमिल"],
-    "te": ["telugu", "తెలుగు", "తెలుగు"],
-    "kn": ["kannada", "ಕನ್ನಡ", "कन्नड़"],
-    "ml": ["malayalam", "മലയാളം", "मलयालम"],
-    "or": ["odia", "oriya", "ଓଡ଼ିଆ", "उड़िया"],
-    "as": ["assamese", "asomiya", "অসমীয়া", "असमिया"],
-    "ur": ["urdu", "اردو", "उर्दू"]
+    "hi": [
+      "hindi",
+      "हिन्दी",
+      "हिंदी",
+      "hindee",
+      "hindustani"
+    ],
+    "en": [
+      "english",
+      "inglish",
+      "अंग्रेजी",
+      "angreji"
+    ],
+    "hi-Latn": [
+      "hinglish",
+      "hymglish",
+      "हिंग्लिश",
+      "roman hindi"
+    ],
+    "pa": [
+      "punjabi",
+      "panjabi",
+      "ਪੰਜਾਬੀ",
+      "पंजाबी"
+    ],
+    "mr": [
+      "marathi",
+      "मराठी",
+      "marathi bhasha"
+    ],
+    "gu": [
+      "gujarati",
+      "ગુજરાતી",
+      "गुजराती"
+    ],
+    "bn": [
+      "bengali",
+      "bangla",
+      "বাংলা",
+      "बंगाली"
+    ],
+    "ta": [
+      "tamil",
+      "தமிழ்",
+      "तमिल"
+    ],
+    "te": [
+      "telugu",
+      "తెలుగు",
+      "తెలుగు"
+    ],
+    "kn": [
+      "kannada",
+      "ಕನ್ನಡ",
+      "कन्नड़"
+    ],
+    "ml": [
+      "malayalam",
+      "മലയാളം",
+      "मलयालम"
+    ],
+    "or": [
+      "odia",
+      "oriya",
+      "ଓଡ଼ିଆ",
+      "उड़िया"
+    ],
+    "as": [
+      "assamese",
+      "asomiya",
+      "অসমীয়া",
+      "असमिया"
+    ],
+    "ur": [
+      "urdu",
+      "اردو",
+      "उर्दू"
+    ]
   },
   "recommendationPrompts": {
     "hi": {
@@ -293,7 +532,7 @@
     },
     "en": {
       "title": "Recommended Language",
-      "message": "Welcome! We noticed your device language is English. Would you like to view Sahkar Sathi in English?",
+      "message": "Welcome! We noticed your device language is English. Would you like to view gram Sathi in English?",
       "confirm": "Switch to English",
       "dismiss": "Keep Current",
       "remember": "Remember my choice"

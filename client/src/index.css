@@ -359,4 +359,22 @@
   .chat-full-height {
     height: calc(100vh - 65px);
   }
+
+  /* ── Voice Assistant Overlay Docking Animations ── */
+  .animate-slide-left {
+    animation: slideLeft 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @keyframes slideLeft {
+    from { opacity: 0; transform: translateX(100%); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  .animate-dock-down {
+    animation: dockDown 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @keyframes dockDown {
+    from { opacity: 0.7; transform: scale(1.05) translateY(-20px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+  }
 }
+

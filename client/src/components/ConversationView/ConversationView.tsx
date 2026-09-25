@@ -37,7 +37,7 @@ export function ConversationView({ turns, className = '' }: ConversationViewProp
             `}
           >
             <div className="font-semibold text-[10px] text-neutral-400 mb-0.5">
-              {turn.role === 'user' ? 'You' : 'Sahkar Sathi AI'}
+              {turn.role === 'user' ? 'You' : 'gram Sathi AI'}
             </div>
             <span>{turn.text}</span>
             {turn.isPartial && (

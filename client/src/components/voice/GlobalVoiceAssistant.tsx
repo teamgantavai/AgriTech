@@ -43,7 +43,7 @@ export function GlobalVoiceAssistant() {
       <aside aria-label="Voice Assistant Controls" className="fixed bottom-5 right-5 z-40">
         <button
           id="global-voice-fab"
-          onClick={() => startVoice({ defaultMode: 'compact' })}
+          onClick={() => startVoice({ defaultMode: 'expanded' })}
           className="group relative flex items-center gap-2.5 px-4 py-3 bg-gradient-to-r from-emerald-600 to-green-700 hover:from-emerald-500 hover:to-green-600 text-white rounded-full shadow-xl shadow-green-900/20 hover:shadow-2xl hover:shadow-green-900/30 transition-all duration-200 active:scale-95 cursor-pointer border border-emerald-400/30"
           aria-label="Talk to Gram Sathi AI"
         >
@@ -59,10 +59,10 @@ export function GlobalVoiceAssistant() {
   // ── 1. MINIMIZED MODE (Compact floating mic bubble) ────────────
   if (uiMode === 'minimized') {
     return (
-      <aside aria-label="Voice Assistant Controls" className="fixed bottom-5 right-5 z-40">
+      <aside aria-label="Voice Assistant Controls" className="fixed bottom-5 right-5 z-40 animate-fade-up">
         <div className="relative group">
           <button
-            onClick={() => setUiMode('compact')}
+            onClick={() => setUiMode('expanded')}
             className={`w-14 h-14 rounded-full shadow-2xl flex items-center justify-center text-2xl transition-all transform active:scale-95 cursor-pointer border-2 ${
               isSpeaking
                 ? 'bg-emerald-600 text-white border-white animate-pulse shadow-emerald-500/50'
@@ -70,7 +70,7 @@ export function GlobalVoiceAssistant() {
                 ? 'bg-blue-600 text-white border-white animate-bounce shadow-blue-500/50'
                 : 'bg-neutral-900 text-white border-emerald-400'
             }`}
-            title="Click to expand assistant"
+            title="Click to open voice screen"
             aria-label="Expand voice assistant"
           >
             {isConnecting ? '⏳' : isSpeaking ? '🔊' : '🎙️'}
@@ -88,7 +88,8 @@ export function GlobalVoiceAssistant() {
   // ── 2. COMPACT MODE (Docked floating bar) ──────────────────────
   if (uiMode === 'compact') {
     return (
-      <aside aria-label="Voice Assistant Controls" className="fixed bottom-5 right-4 sm:right-6 z-40 max-w-md w-[calc(100vw-2rem)] sm:w-auto">
+      <aside aria-label="Voice Assistant Controls" className="fixed bottom-5 right-4 sm:right-6 z-40 max-w-md w-[calc(100vw-2rem)] sm:w-auto animate-dock-down">
+
         <div className="bg-white/95 backdrop-blur-md text-neutral-800 rounded-2xl shadow-2xl border border-neutral-200/80 p-3 sm:p-3.5 flex flex-col gap-2 transition-all">
           
           {/* Header Row: Live status + Controls */}

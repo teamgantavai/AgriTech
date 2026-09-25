@@ -4,7 +4,7 @@
 
 import type { SessionProfile } from '../types/voice';
 
-const SESSION_KEY = 'sahkar_sathi_voice_profile';
+const SESSION_KEY = 'gram_sathi_voice_profile';
 
 const DEFAULT_PROFILE: SessionProfile = {
   selectedLanguage: null,
@@ -77,18 +77,18 @@ export interface FarmerContext {
 
 export function setFarmerContext(ctx: Partial<FarmerContext>): void {
   if (typeof window !== 'undefined') {
-    const existing = (window as any).__sahkar_farmer_ctx || {
+    const existing = (window as any).__gram_farmer_ctx || {
       state: 'Rajasthan',
       month: new Date().getMonth() + 1,
       currentCrop: null,
     };
-    (window as any).__sahkar_farmer_ctx = { ...existing, ...ctx };
+    (window as any).__gram_farmer_ctx = { ...existing, ...ctx };
   }
 }
 
 export function getFarmerContext(): FarmerContext {
-  if (typeof window !== 'undefined' && (window as any).__sahkar_farmer_ctx) {
-    return (window as any).__sahkar_farmer_ctx;
+  if (typeof window !== 'undefined' && (window as any).__gram_farmer_ctx) {
+    return (window as any).__gram_farmer_ctx;
   }
   return {
     state: 'Rajasthan',
@@ -108,13 +108,13 @@ export interface ActiveServiceContext {
 
 export function setActiveServiceContext(ctx: ActiveServiceContext | null): void {
   if (typeof window !== 'undefined') {
-    (window as any).__sahkar_service_ctx = ctx;
+    (window as any).__gram_service_ctx = ctx;
   }
 }
 
 export function getActiveServiceContext(): ActiveServiceContext | null {
   if (typeof window !== 'undefined') {
-    return (window as any).__sahkar_service_ctx || null;
+    return (window as any).__gram_service_ctx || null;
   }
   return null;
 }
@@ -237,8 +237,8 @@ export const GREETINGS_BY_LANGUAGE: Record<string, GreetingPhrases> = {
     crop: (crop) => `नमस्ते! मैं सहकार साथी हूँ। ${crop} के बारे में पूछना है या किसी और चीज़ में मदद चाहिए?`,
   },
   en: {
-    standard: "Hello! I'm Sahkar Sathi. How can I help you today?",
-    crop: (crop) => `Hello! I'm Sahkar Sathi. Would you like to ask about ${crop}, or do you need help with something else?`,
+    standard: "Hello! I'm gram Sathi. How can I help you today?",
+    crop: (crop) => `Hello! I'm gram Sathi. Would you like to ask about ${crop}, or do you need help with something else?`,
   },
   pa: {
     standard: 'ਸਤ ਸ੍ਰੀ ਅਕਾਲ! ਮੈਂ ਸਹਕਾਰ ਸਾਥੀ ਹਾਂ। ਦੱਸੋ, ਮੈਂ ਤੁਹਾਡੀ ਕਿਵੇਂ ਮਦਦ ਕਰ ਸਕਦਾ ਹਾਂ?',
@@ -285,8 +285,8 @@ export const GREETINGS_BY_LANGUAGE: Record<string, GreetingPhrases> = {
     crop: (crop) => `سلام! میں سہکار ساتھی ہوں۔ ${crop} کے بارے میں پوچھنا ہے یا کسی اور چیز میں مدد چاہیے؟`,
   },
   'hi-Latn': {
-    standard: 'Namaste! Main Sahkar Sathi hoon. Batayein, main aapki kaise madad kar sakta hoon?',
-    crop: (crop) => `Namaste! Main Sahkar Sathi hoon. Kya aapko ${crop} ke baare mein poochna hai ya kisi aur cheez mein madad chahiye?`,
+    standard: 'Namaste! Main gram Sathi hoon. Batayein, main aapki kaise madad kar sakta hoon?',
+    crop: (crop) => `Namaste! Main gram Sathi hoon. Kya aapko ${crop} ke baare mein poochna hai ya kisi aur cheez mein madad chahiye?`,
   },
 };
 
@@ -365,7 +365,7 @@ After language onboarding is complete, have a normal natural conversation.`;
     ? `The user's name is ${profile.nameIfProvided}. Address them respectfully when appropriate.`
     : '';
 
-  const farmerCtx = typeof window !== 'undefined' ? (window as any).__sahkar_farmer_ctx || { state: 'Rajasthan', month: new Date().getMonth() + 1, currentCrop: null } : { state: 'Rajasthan', month: new Date().getMonth() + 1, currentCrop: null };
+  const farmerCtx = typeof window !== 'undefined' ? (window as any).__gram_farmer_ctx || { state: 'Rajasthan', month: new Date().getMonth() + 1, currentCrop: null } : { state: 'Rajasthan', month: new Date().getMonth() + 1, currentCrop: null };
 
   const cropCalendarContext = `
 FARMER CROP CALENDAR CONTEXT:
@@ -402,7 +402,7 @@ When the user asks questions such as:
 They are asking specifically about "${serviceCtx.title}". Always prioritize this service and answer directly without asking "Which service are you talking about?".
 ` : '';
 
-  return `You are Sahkar Sathi (सहकार साथी) / Gram Sathi (ग्राम साथी), a trusted, friendly, and highly knowledgeable AI voice assistant dedicated to ALL Indian citizens, with comprehensive access to ALL government schemes, citizen services, student scholarships, education, farming, loans, welfare programs, and the live internet.
+  return `You are gram Sathi (सहकार साथी) / Gram Sathi (ग्राम साथी), a trusted, friendly, and highly knowledgeable AI voice assistant dedicated to ALL Indian citizens, with comprehensive access to ALL government schemes, citizen services, student scholarships, education, farming, loans, welfare programs, and the live internet.
 
 ${serviceContext}
 
@@ -422,14 +422,33 @@ FULL CITIZEN & STUDENT SERVICE ACCESS (CRITICAL):
   * Special Student Programs: AICTE Pragati Scholarship for Girls, Saksham, Student READY agriculture internships, and government research fellowships.
   * Skill & Employment: PMKVY skill training, apprenticeships, and youth entrepreneurship.
 
-LIVE INTERNET SEARCH CAPABILITY:
-- You have LIVE INTERNET ACCESS via the 'searchInternet' tool!
+LIVE INTERNET SEARCH CAPABILITY & MANDATORY SPOKEN ANNOUNCEMENT (CRITICAL):
+- You have LIVE INTERNET ACCESS via the 'searchInternet' and 'searchGovernment' tools!
 - Whenever a user asks for:
   1. Student scholarships, exam dates, college admission details, or state-specific schemes
   2. Any question or topic not in your local database
   3. Up-to-date 2025/2026 government updates, portal links, or eligibility changes
   4. Or when the user explicitly says "search the internet" / "इंटरनेट पर सर्च करो"
-- Call the 'searchInternet' tool immediately with a targeted query! Once you receive the search results, speak the answer clearly and naturally to the user.
+- CRITICAL SEARCH VOICE RULE: When you decide to search the internet, you MUST FIRST SPEAK aloud to the user in their chosen language that you are searching on the internet before or while retrieving the results, so they immediately know you are searching and do not wait in silence:
+  * In Hindi: "मैं इंटरनेट पर ताज़ा जानकारी देख रहा हूँ, एक क्षण रुकिए..."
+  * In Punjabi: "ਮੈਂ ਇੰਟਰਨੈੱਟ 'ਤੇ ਜਾਣਕਾਰੀ ਲੱਭ ਰਿਹਾ ਹਾਂ, ਇੱਕ ਪਲ ਰੁਕੋ..."
+  * In English: "I am searching the internet for you, please wait a moment..."
+  * In Hinglish: "Main internet par search kar raha hoon, ek second..."
+  * In Bengali: "আমি ইন্টারনেটে তথ্য খুঁজছি, অনুগ্রহ করে একটু অপেক্ষা করুন..."
+  * In Marathi: "मी इंटरनेटवर माहिती शोधत आहे, एक क्षण थांबा..."
+  * In Gujarati: "હું ઇન્ટરનેટ પર માહિતી શોધી રહ્યો છું, એક ક્ષણ રાહ જુઓ..."
+  * In Tamil: "நான் இணையத்தில் தேடுகிறேன், சிறிது நேரம் காத்திருங்கள்..."
+  * In Telugu: "నేను ఇంటర్నెట్‌లో వెతుకుతున్నాను, దయచేసి ఒక్క క్షణం వేచి ఉండండి..."
+  * In Kannada: "ನಾನು ಅಂತರ್ಜಾಲದಲ್ಲಿ ಹುಡುಕುತ್ತಿದ್ದೇನೆ, ದಯವಿಟ್ಟು ಒಂದು ಕ್ಷಣ ಕಾಯಿರಿ..."
+  * In Malayalam: "ഞാൻ ഇൻ്റർനെറ്റിൽ തിരയുകയാണ്, ദയവായി ഒരു നിമിഷം കാത്തിരിക്കൂ..."
+  * In Odia: "ମୁଁ ଇଣ୍ଟରନେଟ୍ ରେ ତଥ୍ୟ ଖୋଜୁଛି, ଗୋଟିଏ ମୁହୂର୍ତ୍ତ ଅପେକ୍ଷା କରନ୍ତୁ..."
+  * In Urdu: "میں انٹرنیٹ پر تلاش کر رہا ہوں، ایک لمحہ انتظار کیجیے..."
+- Once search results arrive, answer directly, concisely, and naturally.
+
+ULTRA-FAST RESPONSE SPEED (CRITICAL):
+- Respond IMMEDIATELY. Speak your first word without hesitation.
+- Deliver your initial answer in 1 to 2 crisp, natural spoken sentences. Avoid dead air or lengthy monologues.
+
 
 AGENT-CONTROL TOOL GUIDANCE (Phase 1):
 - navigateToRoute: Use when user says "open", "go to", "kholo", or names a page/section. Example: "agriculture schemes kholo" → navigateToRoute("/schemes/agriculture")

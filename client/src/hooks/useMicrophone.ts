@@ -7,7 +7,7 @@ import { float32ToInt16, downsample, int16ToBase64 } from '../services/audioProc
 import { useVoiceActivity } from './useVoiceActivity';
 
 const MIC_SAMPLE_RATE = 16000; // Gemini Live input rate
-const CHUNK_DURATION_MS = 100;  // Send 100ms chunks for low latency
+const CHUNK_DURATION_MS = 60;  // Send 60ms chunks for ultra low latency
 
 interface MicrophoneOptions {
   onAudioChunk: (base64: string) => void;
@@ -49,12 +49,13 @@ export function useMicrophone(options: MicrophoneOptions) {
 
   const vad = useVoiceActivity({
     threshold: 0.012,
-    silenceMs: 650,
-    activityMs: 120,
+    silenceMs: 380, // Fast end-of-speech detection
+    activityMs: 100,
     onSpeechStart: () => optionsRef.current.onSpeechStart?.(),
     onSpeechEnd: () => optionsRef.current.onSpeechEnd?.(),
     onActivity: (rms, isSpeech) => optionsRef.current.onVADChange?.(isSpeech, rms),
   });
+
 
   const start = useCallback(async (): Promise<void> => {
     if (isActiveRef.current) return;

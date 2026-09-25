@@ -75,10 +75,11 @@ export class GeminiLiveSession {
               disabled: false,
               startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH' as any,
               endOfSpeechSensitivity: 'END_SENSITIVITY_HIGH' as any,
-              prefixPaddingMs: 100,
-              silenceDurationMs: 600,
+              prefixPaddingMs: 60,
+              silenceDurationMs: 320,
             },
           },
+
         },
         callbacks: {
           onopen: () => {

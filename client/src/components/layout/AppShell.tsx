@@ -82,13 +82,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {/* Right Voice Trigger Button */}
         <div className="flex items-center gap-2">
           <button
-            onClick={() => startVoice({ defaultMode: 'compact' })}
+            onClick={() => startVoice({ defaultMode: 'expanded' })}
             className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all shadow-xs cursor-pointer border ${
               isOpen
                 ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
                 : 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600 hover:shadow-emerald-600/20'
             }`}
           >
+
             <span>🎙️</span>
             <span className="hidden sm:inline">{isOpen ? 'Voice Active' : 'Talk to AI'}</span>
           </button>

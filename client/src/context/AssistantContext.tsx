@@ -139,6 +139,9 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
           route: location.pathname,
           title: document.title,
         });
+        // Automatically minimize expanded voice window to compact so the newly opened page is visible
+        setUiMode((current) => (current === 'expanded' ? 'compact' : current));
+
         return {
           currentRoute: location.pathname,
           previousRoute: prev.currentRoute,
@@ -147,6 +150,7 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
       return prev;
     });
   }, [location.pathname]);
+
 
   // Hook into Gemini Live WebRTC / Audio
   const {
@@ -293,6 +297,8 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
       setTimeline(eventBus.getTimeline());
 
       if (ev.type === 'NAVIGATION_START') {
+        // Automatically minimize expanded window to compact with animation when navigating
+        setUiMode('compact');
         setLiveAction({
           type: 'navigate',
           status: 'in_progress',
@@ -301,7 +307,8 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
           icon: '→',
           timestamp: Date.now(),
         });
-      } else if (ev.type === 'NAVIGATION_COMPLETE') {
+      }
+ else if (ev.type === 'NAVIGATION_COMPLETE') {
         setLiveAction({
           type: 'navigate',
           status: 'completed',

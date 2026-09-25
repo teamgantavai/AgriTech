@@ -6,6 +6,7 @@ import type { ToolCallRequest, ToolCallResponse } from '../types/voice';
 import type { GeminiTool } from '../types/session';
 import { callAgentAction, executeClientAction } from '../agent/agentBridge';
 import { AgentStateMachine, AgentState } from '../agent/agentStateMachine';
+import { loadProfile } from './sessionManager';
 
 // Custom event name for tool-driven navigation
 export const VOICE_TOOL_EVENT = 'voice:tool';
@@ -14,6 +15,47 @@ export interface VoiceToolEvent {
   tool: string;
   args: Record<string, unknown>;
 }
+
+const SEARCH_SPOKEN_ANNOUNCEMENTS: Record<string, string> = {
+  hi: 'मैं इंटरनेट पर जानकारी देख रहा हूँ, एक क्षण रुकिए...',
+  pa: 'ਮੈਂ ਇੰਟਰਨੈੱਟ \'ਤੇ ਜਾਣਕਾਰੀ ਲੱਭ ਰਿਹਾ ਹਾਂ, ਇੱਕ ਪਲ ਰੁਕੋ...',
+  en: 'I am searching the internet for you, please wait a moment...',
+  'hi-latn': 'Main internet par search kar raha hoon, ek second...',
+  mr: 'मी इंटरनेटवर माहिती शोधत आहे, एक क्षण थांबा...',
+  bn: 'আমি ইন্টারনেটে তথ্য খুঁজছি, অনুগ্রহ করে একটু অপেক্ষা করুন...',
+  gu: 'હું ઇન્ટરનેટ પર માહિતી શોધી રહ્યો છું, એક ક્ષણ રાહ જુઓ...',
+  ta: 'நான் இணையத்தில் தேடுகிறேன், சிறிது நேரம் காத்திருங்கள்...',
+  te: 'నేను ఇంటర్నెట్‌లో వెతుకుతున్నాను, దయచేసి ఒక్క క్షణం వేచి ఉండండి...',
+  kn: 'ನಾನು ಅಂತರ್ಜಾಲದಲ್ಲಿ ಹುಡುಕುತ್ತಿದ್ದೇನೆ, ದಯವಿಟ್ಟು ಒಂದು ಕ್ಷಣ ಕಾಯಿರಿ...',
+  ml: 'ഞാൻ ഇൻ്റർനെറ്റിൽ തിരയുകയാണ്, ദയവായി ഒരു നിമിഷം കാത്തിരിക്കൂ...',
+  or: 'ମୁଁ ଇଣ୍ଟରନେଟ୍ ରେ ତଥ୍ୟ ଖୋଜୁଛି, ଗୋଟିଏ ମୁହୂର୍ତ୍ତ ଅପେକ୍ଷା କରନ୍ତୁ...',
+  ur: 'میں انٹرنیٹ پر تلاش کر رہا ہوں، ایک لمحہ انتظار کیجیے...',
+};
+
+/**
+ * Speaks an immediate search announcement in the citizen's language
+ * so they are immediately informed while web retrieval runs.
+ */
+export function speakSearchAnnouncement(customLang?: string) {
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    try {
+      const p = loadProfile();
+      const lang = (customLang || p.languageCode || 'hi').toLowerCase();
+      const text = SEARCH_SPOKEN_ANNOUNCEMENTS[lang] || SEARCH_SPOKEN_ANNOUNCEMENTS['hi'];
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1.05;
+      utterance.pitch = 1.0;
+      if (lang === 'hi') utterance.lang = 'hi-IN';
+      else if (lang === 'pa') utterance.lang = 'pa-IN';
+      else if (lang === 'en') utterance.lang = 'en-IN';
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      // SpeechSynthesis may fail in silent contexts, ignore
+    }
+  }
+}
+
 
 /**
  * Dispatch a custom event so the UI can react to tool calls
@@ -124,7 +166,9 @@ export async function executeToolCall(
       case 'searchInternet': {
         const query = String(args.query || '');
         dispatchToolEvent('searchInternet', { query });
+        speakSearchAnnouncement();
         const resp = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+
         if (resp.ok) {
           const data = await resp.json();
           return {
@@ -161,6 +205,7 @@ export async function executeToolCall(
           }
         }
         // Fallback: search internet if local scheme database has no direct match
+        speakSearchAnnouncement();
         const searchResp = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
         if (searchResp.ok) {
           const searchData = await searchResp.json();
@@ -255,8 +300,10 @@ export async function executeToolCall(
         const query = String(args.query || '');
         const govState = args.state ? String(args.state) : undefined;
         dispatchToolEvent('searchGovernment', { query, state: govState });
+        speakSearchAnnouncement();
         AgentStateMachine.transition(AgentState.EXECUTING);
         const govResult = await callAgentAction('search_government', { query, state: govState });
+
         return {
           id,
           result: {

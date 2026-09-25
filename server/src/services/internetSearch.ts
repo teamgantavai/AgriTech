@@ -2,6 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { getAllRecords, KBRecord } from './knowledgeBase';
 import fs from 'fs';
 import path from 'path';
+import { withGeminiFailover } from './geminiKeys';
 
 export interface SearchResultItem {
   title: string;
@@ -18,19 +19,6 @@ export interface SearchResponse {
   sources: string[];
 }
 
-let aiClient: GoogleGenAI | null = null;
-
-function getAiClient(): GoogleGenAI | null {
-  if (!aiClient) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.warn('[InternetSearch] GEMINI_API_KEY is not configured');
-      return null;
-    }
-    aiClient = new GoogleGenAI({ apiKey });
-  }
-  return aiClient;
-}
 
 /**
  * Searches local knowledge base (CSV + curated JSON) for matching records.
@@ -91,9 +79,6 @@ function searchLocalKnowledge(query: string, limit: number = 3): SearchResultIte
  * Searches the live internet using Gemini's Google Search Grounding.
  */
 async function searchWithGoogleGrounding(query: string): Promise<{ summary: string; webResults: SearchResultItem[] } | null> {
-  const client = getAiClient();
-  if (!client) return null;
-
   const candidateModels = [
     'gemini-2.5-flash',
     'gemini-2.0-flash',
@@ -108,20 +93,23 @@ Provide:
 1. A concise, spoken-friendly summary (2 to 3 sentences) answering the user's question with specific scheme names, benefits, or procedures.
 2. Official portal URLs or department names if found.`;
 
-  for (const model of candidateModels) {
-    try {
-      const response = await client.models.generateContent({
-        model,
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} } as any],
-          temperature: 0.3,
-          maxOutputTokens: 600,
-        },
-      });
+  try {
+    return await withGeminiFailover(async (_key, client) => {
+      for (const model of candidateModels) {
+        try {
+          const response = await client.models.generateContent({
+            model,
+            contents: prompt,
+            config: {
+              tools: [{ googleSearch: {} } as any],
+              temperature: 0.3,
+              maxOutputTokens: 600,
+            },
+          });
 
-      const text = response.text || '';
-      if (!text) continue;
+          const text = response.text || '';
+          if (!text) continue;
+
 
       const webResults: SearchResultItem[] = [];
 
@@ -161,13 +149,19 @@ Provide:
         summary: text,
         webResults,
       };
-    } catch (err: any) {
-      console.warn(`[InternetSearch] Google search grounding failed with ${model}:`, err?.message || err);
-    }
-  }
+        } catch (err: any) {
+          console.warn(`[InternetSearch] Google search grounding failed with ${model}:`, err?.message || err);
+        }
+      }
 
-  return null;
+      return null;
+    }, 'InternetSearch');
+  } catch (err: any) {
+    console.warn('[InternetSearch] Grounding search failed across all keys:', err?.message || err);
+    return null;
+  }
 }
+
 
 /**
  * Fallback internet search using public search API (DuckDuckGo instant answer).

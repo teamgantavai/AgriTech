@@ -52,8 +52,8 @@ const SYNONYMS: Record<string, string[]> = {
   // Cooperative
   'pacs': ['pacs', 'cooperative', 'credit society', 'पैक्स', 'सहकारी', 'समिति'],
   'पैक्स': ['pacs', 'cooperative', 'credit society', 'सहकारी'],
-  'cooperative': ['cooperative', 'sahkari', 'सहकारी', 'samiti', 'society', 'bylaws'],
-  'सहकारी': ['cooperative', 'sahkari', 'samiti', 'society', 'pacs'],
+  'cooperative': ['cooperative', 'grami', 'सहकारी', 'samiti', 'society', 'bylaws'],
+  'सहकारी': ['cooperative', 'grami', 'samiti', 'society', 'pacs'],
   // Farm equipment
   'tractor': ['tractor', 'machinery', 'equipment', 'pump', 'उपकरण', 'मशीन', 'mechanization'],
   'मशीन': ['machinery', 'equipment', 'tractor', 'pump', 'tools'],

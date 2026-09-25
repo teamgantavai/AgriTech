@@ -35,7 +35,7 @@ class NumberedCanvas(canvas.Canvas):
 
         # Running Top Header (pages > 1)
         if self._pageNumber > 1:
-            self.drawString(54, 750, "Sahkar Sathi (Gram Sathi) — Tech Stack & System Architecture")
+            self.drawString(54, 750, "gram Sathi (Gram Sathi) — Tech Stack & System Architecture")
             self.drawRightString(558, 750, "Architecture Specification")
             self.setStrokeColor(colors.HexColor("#cbd5e1"))
             self.setLineWidth(0.5)
@@ -50,7 +50,7 @@ class NumberedCanvas(canvas.Canvas):
         self.line(54, 46, 558, 46)
         self.restoreState()
 
-def build_pdf(filename="Sahkar_Sathi_Tech_Stack_and_Architecture.pdf"):
+def build_pdf(filename="gram_Sathi_Tech_Stack_and_Architecture.pdf"):
     doc = SimpleDocTemplate(
         filename,
         pagesize=letter,
@@ -168,7 +168,7 @@ def build_pdf(filename="Sahkar_Sathi_Tech_Stack_and_Architecture.pdf"):
     # ─────────────────────────────────────────────────────────────
     # TITLE & HEADER
     # ─────────────────────────────────────────────────────────────
-    story.append(Paragraph("Sahkar Sathi · सहकार साथी", title_style))
+    story.append(Paragraph("gram Sathi · सहकार साथी", title_style))
     story.append(Paragraph("<b>Gram Sathi</b>: System Architecture & Technical Stack Specification", subtitle_style))
 
     # Meta banner table
@@ -203,7 +203,7 @@ def build_pdf(filename="Sahkar_Sathi_Tech_Stack_and_Architecture.pdf"):
     story.append(Paragraph("1. Executive Summary & Problem Space", h1_style))
     story.append(HRFlowable(width="100%", thickness=1, color=primary_color, spaceAfter=6, spaceBefore=0))
     story.append(Paragraph(
-        "<b>Sahkar Sathi (Gram Sathi)</b> is an intelligent agricultural and citizen welfare platform designed to eliminate literacy, language, and institutional barriers for Indian citizens. The platform acts as a unified digital companion providing verified, actionable guidance across <b>cooperative laws (PACS)</b>, <b>credit facilities (Kisan Credit Card - KCC)</b>, <b>crop insurance claims (PMFBY)</b>, <b>solar irrigation grants (PM-KUSUM)</b>, and <b>real-time agricultural crop calendars</b>.",
+        "<b>gram Sathi (Gram Sathi)</b> is an intelligent agricultural and citizen welfare platform designed to eliminate literacy, language, and institutional barriers for Indian citizens. The platform acts as a unified digital companion providing verified, actionable guidance across <b>cooperative laws (PACS)</b>, <b>credit facilities (Kisan Credit Card - KCC)</b>, <b>crop insurance claims (PMFBY)</b>, <b>solar irrigation grants (PM-KUSUM)</b>, and <b>real-time agricultural crop calendars</b>.",
         body_style
     ))
     story.append(Paragraph(
@@ -506,7 +506,7 @@ def build_pdf(filename="Sahkar_Sathi_Tech_Stack_and_Architecture.pdf"):
         Paragraph("6. Architectural Summary & Conclusion", h1_style),
         HRFlowable(width="100%", thickness=1, color=primary_color, spaceAfter=6, spaceBefore=0),
         Paragraph(
-            "The <b>Sahkar Sathi (Gram Sathi)</b> codebase exemplifies modern, resilient AI architecture designed for the underserved rural demographic. By combining a zero-credential browser voice pipeline (Gemini Live Native Audio), an embedded in-memory RAG system with deep multilingual synonym awareness, and comprehensive crop data from the Government of India's UPAg portal, the platform delivers instant, trustworthy, and empathetic assistance to millions of Indian farmers and citizens.",
+            "The <b>gram Sathi (Gram Sathi)</b> codebase exemplifies modern, resilient AI architecture designed for the underserved rural demographic. By combining a zero-credential browser voice pipeline (Gemini Live Native Audio), an embedded in-memory RAG system with deep multilingual synonym awareness, and comprehensive crop data from the Government of India's UPAg portal, the platform delivers instant, trustworthy, and empathetic assistance to millions of Indian farmers and citizens.",
             body_style
         )
     ]))
@@ -515,5 +515,5 @@ def build_pdf(filename="Sahkar_Sathi_Tech_Stack_and_Architecture.pdf"):
     print(f"Generated {filename} successfully.")
 
 if __name__ == '__main__':
-    target = os.path.join(os.getcwd(), "Sahkar_Sathi_Tech_Stack_and_Architecture.pdf")
+    target = os.path.join(os.getcwd(), "gram_Sathi_Tech_Stack_and_Architecture.pdf")
     build_pdf(target)

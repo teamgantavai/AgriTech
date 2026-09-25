@@ -54,7 +54,7 @@ async function bootstrap() {
   });
 
   app.listen(PORT, () => {
-    console.log(`🚀 Sahkar Sathi API server running on http://localhost:${PORT}`);
+    console.log(`🚀 gram Sathi API server running on http://localhost:${PORT}`);
     const stats = getKBStats();
     console.log(`📚 Knowledge base: ${stats.totalRecords} records loaded`);
   });

@@ -1,7 +1,7 @@
 {
-  "name": "sahkar-sathi-server",
+  "name": "gram-sathi-server",
   "version": "1.0.0",
-  "description": "Sahkar Sathi Backend API Server",
+  "description": "gram Sathi Backend API Server",
   "main": "dist/index.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",

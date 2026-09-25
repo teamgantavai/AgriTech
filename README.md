@@ -1,4 +1,4 @@
-# Sahkar Sathi · सहकार साथी
+# gram Sathi · सहकार साथी
 
 **AI-Powered Multilingual Cooperative & Farmer Assistant**
 
@@ -64,7 +64,7 @@ npm run dev
 
 You should see:
 ```
-🚀 Sahkar Sathi API server running on http://localhost:3001
+🚀 gram Sathi API server running on http://localhost:3001
 ✅ Knowledge base loaded successfully
 📚 Knowledge base: 35 records loaded
 ```
@@ -279,7 +279,7 @@ Returns dashboard statistics including knowledge record count.
 
 ## Important Disclaimer
 
-Sahkar Sathi is an **informational assistance tool**. It is not a government authority, legal advisor, financial advisor, or insurance company. Always verify:
+gram Sathi is an **informational assistance tool**. It is not a government authority, legal advisor, financial advisor, or insurance company. Always verify:
 - Government scheme details with official portals
 - Legal provisions with the relevant Registrar of Cooperatives
 - Insurance eligibility and premium with the insurer
