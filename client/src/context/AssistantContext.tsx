@@ -117,17 +117,6 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
     prefetchToken();
   }, []);
 
-  // Auto-start voice if start=true query param or /voice path
-  const autoStartTriggeredRef = useRef(false);
-  useEffect(() => {
-    const searchParams = new URLSearchParams(location.search);
-    const isVoiceStart = searchParams.get('start') === 'true' || location.pathname === '/voice';
-    if (isVoiceStart && !autoStartTriggeredRef.current) {
-      autoStartTriggeredRef.current = true;
-      startVoice({ defaultMode: 'expanded' });
-    }
-  }, [location.pathname, location.search, startVoice]);
-
 
   // Update route tracker and emit route changes
   useEffect(() => {
@@ -353,8 +342,8 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
   // Update streaming transcript from turns
   useEffect(() => {
     if (turns.length > 0) {
-      const lastUser = [...turns].reverse().find((t) => t.speaker === 'user');
-      const lastAi = [...turns].reverse().find((t) => t.speaker === 'assistant');
+      const lastUser = [...turns].reverse().find((t) => t.role === 'user');
+      const lastAi = [...turns].reverse().find((t) => t.role === 'assistant');
       if (lastUser?.text) setCurrentTranscript(lastUser.text);
       if (lastAi?.text) setAssistantResponse(lastAi.text);
     }
@@ -390,6 +379,18 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
     },
     [connect]
   );
+
+  // Auto-start voice if start=true query param or /voice path
+  const autoStartTriggeredRef = useRef(false);
+  useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    const isVoiceStart = searchParams.get('start') === 'true' || location.pathname === '/voice';
+    if (isVoiceStart && !autoStartTriggeredRef.current) {
+      autoStartTriggeredRef.current = true;
+      startVoice({ defaultMode: 'expanded' });
+    }
+  }, [location.pathname, location.search, startVoice]);
+
 
   // Stop voice assistant
   const stopVoice = useCallback(() => {

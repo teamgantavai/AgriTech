@@ -337,17 +337,18 @@ export function GlobalVoiceAssistant() {
               <div
                 key={idx}
                 className={`flex flex-col text-xs p-3 rounded-2xl ${
-                  turn.speaker === 'user'
+                  turn.role === 'user'
                     ? 'bg-emerald-50/70 border border-emerald-100 text-emerald-950 ml-6'
                     : 'bg-neutral-100/80 border border-neutral-200 text-neutral-900 mr-6'
                 }`}
               >
                 <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-0.5">
-                  {turn.speaker === 'user' ? 'You' : 'Gram Sathi'}
+                  {turn.role === 'user' ? 'You' : 'Gram Sathi'}
                 </span>
                 <p className="leading-relaxed whitespace-pre-wrap">{turn.text}</p>
               </div>
             ))
+
           )}
         </div>
 
