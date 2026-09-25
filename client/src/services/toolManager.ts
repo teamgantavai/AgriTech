@@ -4,6 +4,8 @@
 
 import type { ToolCallRequest, ToolCallResponse } from '../types/voice';
 import type { GeminiTool } from '../types/session';
+import { callAgentAction, executeClientAction } from '../agent/agentBridge';
+import { AgentStateMachine, AgentState } from '../agent/agentStateMachine';
 
 // Custom event name for tool-driven navigation
 export const VOICE_TOOL_EVENT = 'voice:tool';
@@ -213,6 +215,73 @@ export async function executeToolCall(
         return { id, result: { success: true, schemeId } };
       }
 
+      // ── Agent-control Phase 1 tools ────────────────────────
+      case 'navigateToRoute': {
+        const route = String(args.route || '/');
+        dispatchToolEvent('navigateToRoute', { route });
+        AgentStateMachine.transition(AgentState.EXECUTING);
+        const navResult = executeClientAction({ type: 'navigate', params: { route } });
+        AgentStateMachine.forceTransition(AgentState.COMPLETED);
+        return { id, result: { success: true, route, ...navResult } };
+      }
+
+      case 'getUIState': {
+        const uiResult = await callAgentAction('get_ui_state', {});
+        return { id, result: { success: true, uiState: uiResult } };
+      }
+
+      case 'getAgricultureNews': {
+        const state = args.state ? String(args.state) : undefined;
+        const category = args.category ? String(args.category) : undefined;
+        dispatchToolEvent('getAgricultureNews', { state, category });
+        const agriResult = await callAgentAction('get_agriculture_news', { state, category });
+        return { id, result: { success: true, ...agriResult } };
+      }
+
+      case 'searchGovernment': {
+        const query = String(args.query || '');
+        const govState = args.state ? String(args.state) : undefined;
+        dispatchToolEvent('searchGovernment', { query, state: govState });
+        AgentStateMachine.transition(AgentState.EXECUTING);
+        const govResult = await callAgentAction('search_government', { query, state: govState });
+        return {
+          id,
+          result: {
+            success: true,
+            query,
+            ...govResult,
+            retrievedAt: new Date().toISOString(),
+          },
+        };
+      }
+
+      case 'fillField': {
+        const fieldId = String(args.fieldId || '');
+        const value = String(args.value || '');
+        const fieldLabel = args.fieldLabel ? String(args.fieldLabel) : fieldId;
+        dispatchToolEvent('fillField', { fieldId, value, fieldLabel });
+        // Goes through agent bridge (permission layer handles L2 confirmation)
+        const fillResult = await callAgentAction('fill_field', { fieldId, value, fieldLabel });
+        return { id, result: { success: true, fieldId, value, ...fillResult } };
+      }
+
+      case 'requestConfirmation': {
+        const message = String(args.message || '');
+        const actionType = String(args.actionType || 'submit_form');
+        const reviewData = args.reviewData as Record<string, string> | undefined;
+        dispatchToolEvent('requestConfirmation', { message, actionType, reviewData });
+        const confirmResult = await callAgentAction('request_confirmation', { actionType, message, reviewData });
+        return { id, result: { success: true, ...confirmResult } };
+      }
+
+      case 'openExternalService': {
+        const url = String(args.url || '');
+        const siteName = String(args.siteName || 'Government Website');
+        dispatchToolEvent('openExternalService', { url, siteName });
+        AgentStateMachine.emitExternalNavigation(url, siteName);
+        return { id, result: { success: true, url, siteName, requiresBoundaryWarning: true } };
+      }
+
       default:
         return {
           id,
@@ -387,6 +456,80 @@ export const VOICE_TOOLS: GeminiTool[] = [
             },
           },
           required: ['state'],
+        },
+      },
+      // ── Phase 1 Agent-Control Tool Declarations ─────────────
+      {
+        name: 'navigateToRoute',
+        description: 'Navigate to a specific page route within Gram Sathi. Use when the user asks to open a specific section, page or service.',
+        parameters: {
+          type: 'object',
+          properties: {
+            route: { type: 'string', description: 'Route path e.g. /schemes, /calendar, /chat, /services/pm-kisan' },
+            reason: { type: 'string', description: 'Why navigating' },
+          },
+          required: ['route'],
+        },
+      },
+      {
+        name: 'getAgricultureNews',
+        description: 'Get latest official government agriculture news, MSP announcements, crop advisories and schemes. Use when user asks for latest agriculture updates, government announcements about crops, or farming news.',
+        parameters: {
+          type: 'object',
+          properties: {
+            state: { type: 'string', description: 'Filter by Indian state (optional)' },
+            category: { type: 'string', description: 'Category: msp, crop, scheme, subsidy, market, weather, fertilizer, procurement' },
+          },
+        },
+      },
+      {
+        name: 'searchGovernment',
+        description: 'Search trusted Indian government websites (gov.in, nic.in) for official, current information. Use for queries about specific schemes, eligibility, application processes, or any government service where fresh official data is needed.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'The search query, e.g. "Punjab farmer subsidy 2025" or "NSP scholarship last date"' },
+            state: { type: 'string', description: 'Indian state for state-specific queries' },
+          },
+          required: ['query'],
+        },
+      },
+      {
+        name: 'fillField',
+        description: 'Fill a specific form field on the current page. Use ONLY when the user explicitly provides information they want entered in a form. Requires user consent.',
+        parameters: {
+          type: 'object',
+          properties: {
+            fieldId: { type: 'string', description: 'HTML element ID of the field' },
+            value: { type: 'string', description: 'Value to fill in' },
+            fieldLabel: { type: 'string', description: 'Human-readable name of the field (e.g. "Full Name", "State")' },
+          },
+          required: ['fieldId', 'value'],
+        },
+      },
+      {
+        name: 'requestConfirmation',
+        description: 'Show a confirmation dialog to the user before performing a consequential action (form submission, payment, official declaration). ALWAYS use this before submit_form.',
+        parameters: {
+          type: 'object',
+          properties: {
+            actionType: { type: 'string', description: 'The action requiring confirmation: submit_form, open_external, etc.' },
+            message: { type: 'string', description: 'Clear message explaining what will happen' },
+            reviewData: { type: 'object', description: 'Key-value pairs of data to display in review screen' },
+          },
+          required: ['actionType', 'message'],
+        },
+      },
+      {
+        name: 'openExternalService',
+        description: 'Open an official government website. Shows a boundary warning to the user and only opens trusted .gov.in or .nic.in URLs.',
+        parameters: {
+          type: 'object',
+          properties: {
+            url: { type: 'string', description: 'Official government URL (must be .gov.in, .nic.in or approved portal)' },
+            siteName: { type: 'string', description: 'Human-readable name e.g. "National Scholarship Portal" or "PM-KISAN Portal"' },
+          },
+          required: ['url', 'siteName'],
         },
       },
     ],

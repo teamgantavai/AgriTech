@@ -40,7 +40,7 @@ async function mintEphemeralToken(apiKey: string, maxRetries = 2): Promise<{ nam
         throw new Error('Failed to obtain ephemeral token from Google AI (empty token name).');
       }
 
-      return token;
+      return token as typeof token & { name: string };
     } catch (err: any) {
       lastError = err;
       const cause = err?.cause?.code || err?.cause?.message || '';

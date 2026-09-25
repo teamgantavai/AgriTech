@@ -7,6 +7,7 @@ import { liveTokenRouter } from './routes/liveToken';
 import { schemesRouter } from './routes/schemes';
 import { cropCalendarRouter } from './routes/cropCalendar';
 import { searchRouter } from './routes/search';
+import { agentRouter } from './agent/agentController';
 import { initKnowledgeBase, getKBStats } from './services/knowledgeBase';
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
@@ -46,6 +47,7 @@ async function bootstrap() {
   app.use('/api/schemes', schemesRouter);
   app.use('/api/crop-calendar', cropCalendarRouter);
   app.use('/api/search', searchRouter);
+  app.use('/api/agent', agentRouter);
 
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });

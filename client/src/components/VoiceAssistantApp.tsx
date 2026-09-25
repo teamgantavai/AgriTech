@@ -14,6 +14,11 @@ import { VOICE_TOOL_EVENT, type VoiceToolEvent, updateActiveFarmerContext } from
 import { prefetchToken } from '../services/tokenService';
 import { CropCalendar } from './crop-calendar/CropCalendar';
 import { ChatAssistant } from './ChatAssistant/ChatAssistant';
+import { AgentProgressBar } from '../agent/AgentProgressBar';
+import { AgentConfirmationModal } from '../agent/AgentConfirmationModal';
+import { ExternalWebsiteBoundary } from '../agent/ExternalWebsiteBoundary';
+import { AgentStateMachine, AgentState, type ConfirmationRequest, type TaskProgress, type SourceInfo } from '../agent/agentStateMachine';
+import { updateUIState } from '../agent/agentBridge';
 
 // Simple example prompts for the voice landing — localized
 
@@ -95,6 +100,13 @@ export function VoiceAssistantApp({ defaultTab = 'chat' }: VoiceAssistantAppProp
   const toolNotifTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoStartHandledRef = useRef(false);
 
+  // ── Agent-control state ──────────────────────────────────────
+  const [agentState, setAgentState] = useState<AgentState>(AgentState.IDLE);
+  const [agentConfirmation, setAgentConfirmation] = useState<ConfirmationRequest | null>(null);
+  const [agentTask, setAgentTask] = useState<TaskProgress | null>(null);
+  const [externalNav, setExternalNav] = useState<{ url: string; siteName: string } | null>(null);
+  const [agentSources, setAgentSources] = useState<SourceInfo[]>([]);
+
   // Synchronize tab state with router URL for browser back/forward
   useEffect(() => {
     if (location.pathname === '/voice') setActiveTab('schemes');
@@ -166,6 +178,28 @@ export function VoiceAssistantApp({ defaultTab = 'chat' }: VoiceAssistantAppProp
           msg = `Updated state to ${args.state || ''}`;
           setActiveTab('calendar');
           break;
+        // ── Phase 1 agent-control tool notifications ──────────
+        case 'navigateToRoute':
+          msg = `📍 Opening: ${args.route}`;
+          AgentStateMachine.forceTransition(AgentState.EXECUTING);
+          break;
+        case 'searchGovernment':
+          msg = `🏛️ Searching government sources: "${args.query}"`;
+          AgentStateMachine.forceTransition(AgentState.EXECUTING);
+          break;
+        case 'getAgricultureNews':
+          msg = `📰 Getting agriculture news${args.state ? ` for ${args.state}` : ''}`;
+          AgentStateMachine.forceTransition(AgentState.EXECUTING);
+          break;
+        case 'fillField':
+          msg = `✏️ Filling: ${args.fieldLabel || args.fieldId}`;
+          break;
+        case 'requestConfirmation':
+          msg = `⚠️ Confirmation needed`;
+          break;
+        case 'openExternalService':
+          msg = `🔗 Opening: ${args.siteName}`;
+          break;
         default:
           msg = `Action: ${tool}`;
       }
@@ -181,6 +215,44 @@ export function VoiceAssistantApp({ defaultTab = 'chat' }: VoiceAssistantAppProp
   useEffect(() => {
     prefetchToken();
   }, []);
+
+  // ── Agent state machine subscription ────────────────────────
+  useEffect(() => {
+    const unsubscribe = AgentStateMachine.subscribe((event) => {
+      switch (event.type) {
+        case 'STATE_CHANGED':
+          setAgentState(event.state);
+          break;
+        case 'CONFIRMATION_REQUIRED':
+          setAgentConfirmation(event.request);
+          break;
+        case 'TASK_PROGRESS':
+          setAgentTask(event.progress);
+          break;
+        case 'SOURCE_RECEIVED':
+          setAgentSources((prev) => [event.source, ...prev].slice(0, 5));
+          break;
+        case 'EXTERNAL_NAVIGATION':
+          setExternalNav({ url: event.url, siteName: event.siteName });
+          break;
+        default:
+          break;
+      }
+    });
+    // Sync route to UIState
+    updateUIState({ route: window.location.pathname, isLoading: false, hasError: false });
+    return unsubscribe;
+  }, []);
+
+  // Reset completed/failed agent state after 3 seconds
+  useEffect(() => {
+    if (agentState === AgentState.COMPLETED || agentState === AgentState.FAILED) {
+      const t = setTimeout(() => {
+        AgentStateMachine.forceTransition(AgentState.IDLE);
+      }, 3000);
+      return () => clearTimeout(t);
+    }
+  }, [agentState]);
 
   const currentLangCode = profile.languageCode || 'hi';
   const currentPrompts = LOCALIZED_SUGGESTIONS[currentLangCode] || LOCALIZED_SUGGESTIONS['en'];
@@ -451,6 +523,41 @@ export function VoiceAssistantApp({ defaultTab = 'chat' }: VoiceAssistantAppProp
             🔒 Gram Sathi never asks for OTP, Aadhaar number or passwords.
           </p>
         </footer>
+      )}
+
+      {/* ══ AGENT-CONTROL LAYER ══════════════════════════════════ */}
+
+      {/* Agent progress bar — fixed to top when agent is active */}
+      <AgentProgressBar
+        task={agentTask}
+        agentState={agentState}
+        langCode={currentLangCode}
+      />
+
+      {/* L2/L3 Confirmation modal — blocks until user responds */}
+      <AgentConfirmationModal
+        confirmation={agentConfirmation}
+        langCode={currentLangCode}
+        onResponse={(response) => {
+          setAgentConfirmation(null);
+          if (response === 'denied') {
+            AgentStateMachine.forceTransition(AgentState.IDLE);
+          }
+        }}
+      />
+
+      {/* External website boundary warning */}
+      {externalNav && (
+        <ExternalWebsiteBoundary
+          url={externalNav.url}
+          siteName={externalNav.siteName}
+          langCode={currentLangCode}
+          onProceed={() => {
+            window.open(externalNav.url, '_blank', 'noopener,noreferrer');
+            setExternalNav(null);
+          }}
+          onCancel={() => setExternalNav(null)}
+        />
       )}
     </div>
   );
