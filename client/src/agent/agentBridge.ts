@@ -87,7 +87,7 @@ function getSessionId(): string {
 }
 
 // ── Execute a client-side agent action ───────────────────────
-export function executeClientAction(action: AgentBridgeAction): unknown {
+export function executeClientAction(action: AgentBridgeAction): Record<string, any> {
   const { type, params } = action;
 
   // Dispatch to UI via custom event — components subscribe to this
@@ -221,7 +221,7 @@ export function executeClientAction(action: AgentBridgeAction): unknown {
 export async function callAgentAction(
   tool: string,
   params: Record<string, unknown>
-): Promise<unknown> {
+): Promise<Record<string, any>> {
   const sessionId = getSessionId();
   AgentStateMachine.transition(AgentState.EXECUTING);
 

@@ -64,7 +64,7 @@ export interface AssistantContextType {
   stopVoice: () => void;
   retryVoice: () => Promise<void>;
   setLanguage: (lang: SupportedLanguage | null) => void;
-  handleConfirmationResponse: (response: 'approved' | 'denied') => void;
+  handleConfirmationResponse: (response: 'confirmed' | 'denied') => void;
   closeExternalNav: () => void;
   proceedExternalNav: () => void;
   clearAction: () => void;
@@ -410,13 +410,14 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
   }, [connect]);
 
   // Confirmation handling
-  const handleConfirmationResponse = useCallback((response: 'approved' | 'denied') => {
+  const handleConfirmationResponse = useCallback((response: 'confirmed' | 'denied') => {
     setAgentConfirmation(null);
     if (response === 'denied') {
       AgentStateMachine.forceTransition(AgentState.IDLE);
       setCurrentAction(null);
     }
   }, []);
+
 
   const closeExternalNav = useCallback(() => {
     setExternalNav(null);
